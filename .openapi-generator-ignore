@@ -1,0 +1,6 @@
+# Cintura di sicurezza per la rigenerazione.
+# Grazie alla separazione generated/ <-> src/, qui dentro vogliamo rigenerare tutto.
+# Esempio di protezione se mai si generasse in directory miste:
+# setup.py
+# requirements.txt
+# README.md

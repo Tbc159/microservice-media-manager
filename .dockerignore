@@ -1,0 +1,12 @@
+.git
+.github
+.cache
+generated
+tests
+**/__pycache__
+*.pyc
+.venv
+venv
+*.zip
+config/*/collaudo.env
+config/*/production.env

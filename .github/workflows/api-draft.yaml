@@ -1,0 +1,35 @@
+name: API Draft - Fast Scaffold
+
+on:
+  push:
+    branches: ["feature/**", "draft/**"]
+  workflow_dispatch:
+
+jobs:
+  scaffold:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Cache openapi-generator jar
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: openapi-gen-${{ hashFiles('Makefile') }}
+
+      - name: Validate (warning-only, lo YAML e' ancora draft)
+        run: make validate || echo "::warning::Spec ancora in draft"
+
+      - name: Generate scaffold
+        run: make generate-all
+
+      - name: Upload scaffold artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-scaffold-${{ github.sha }}
+          path: generated/
+          retention-days: 7

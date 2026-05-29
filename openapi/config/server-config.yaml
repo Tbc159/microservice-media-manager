@@ -1,0 +1,3 @@
+# Config generator lato server (python-flask), comune a tutti i domini.
+# packageName e' impostato per-dominio dal Makefile (--additional-properties).
+serverPort: 8080

@@ -1,0 +1,3 @@
+# Config generator lato client, comune a tutti i domini.
+# packageName/projectName sono impostati per-dominio dal Makefile.
+library: urllib3

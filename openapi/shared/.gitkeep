@@ -1,0 +1,2 @@
+# Componenti OAS condivisi tra domini (schemi comuni: error, paginazione...).
+# Una modifica qui dentro fa rideployare TUTTI i domini (vedi generate-api.yml).
