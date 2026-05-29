@@ -1,0 +1,1 @@
+connexion[flask,uvicorn]>=3.1,<4

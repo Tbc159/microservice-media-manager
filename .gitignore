@@ -1,0 +1,11 @@
+# Codice generato: rigenerato in CI/CD, non versionato (vedi README sez. 9).
+generated/
+.cache/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.env.local
+.claude/
+# Istruzioni locali per Claude Code: non versionate
+CLAUDE.md

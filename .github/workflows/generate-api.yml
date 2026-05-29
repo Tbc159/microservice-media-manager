@@ -1,0 +1,114 @@
+name: Generate & Deploy API
+
+on:
+  push:
+    branches: [develop, coll, main]
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # Rileva quali domini sono cambiati nel push -> matrix di deploy selettivo.
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      domains: ${{ steps.set.outputs.domains }}
+      gh_environment: ${{ steps.map.outputs.gh_environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: map
+        name: Mappa branch -> GitHub Environment
+        run: |
+          case "${{ github.ref_name }}" in
+            develop) ENV="staging" ;;
+            coll)    ENV="collaudo" ;;
+            main)    ENV="production" ;;
+            *)       echo "::error::Branch non mappato: ${{ github.ref_name }}"; exit 1 ;;
+          esac
+          echo "gh_environment=$ENV" >> "$GITHUB_OUTPUT"
+          echo "::notice::Deploy target -> $ENV"
+
+      - id: set
+        name: Calcola i domini impattati
+        # shell senza -e/pipefail: un grep senza match (exit 1) non deve abortire la detection
+        shell: bash --noprofile --norc {0}
+        run: |
+          ALL=$(for d in openapi/*/; do [ -f "$d/api.yaml" ] && basename "$d"; done | sort -u)
+          BEFORE="${{ github.event.before }}"
+
+          # Primo push / forced / parent non più raggiungibile -> rideploya tutto
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            FILES=$(git ls-tree -r --name-only HEAD)
+          else
+            FILES=$(git diff --name-only "$BEFORE" "${{ github.sha }}")
+          fi
+
+          # File condivisi -> impattano ogni build -> tutti i domini
+          if echo "$FILES" | grep -Eq '^(Makefile|Dockerfile|\.dockerignore|requirements.*\.txt|src/app\.py|src/client/|openapi/config/|openapi/shared/)'; then
+            CHANGED="$ALL"
+          else
+            CAND=$(echo "$FILES" | sed -nE 's#^openapi/([^/]+)/.*#\1#p; s#^config/([^/]+)/.*#\1#p; s#^src/domains/([^/]+)/.*#\1#p; s#^docker-compose\.([^.]+)\.yml$#\1#p' | sort -u)
+            CHANGED=$(comm -12 <(echo "$ALL") <(echo "$CAND"))   # solo domini esistenti
+          fi
+          CHANGED=$(echo "$CHANGED" | grep -v '^$')
+
+          if [ -z "$CHANGED" ]; then
+            echo "::notice::Nessun dominio impattato: niente deploy."
+            echo 'domains=[]' >> "$GITHUB_OUTPUT"
+          else
+            JSON=$(echo "$CHANGED" | jq -R . | jq -cs .)
+            echo "domains=$JSON" >> "$GITHUB_OUTPUT"
+            echo "::notice::Domini da deployare: $CHANGED"
+          fi
+
+  build-deploy:
+    needs: detect
+    if: needs.detect.outputs.domains != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        domain: ${{ fromJson(needs.detect.outputs.domains) }}
+    environment:
+      name: ${{ needs.detect.outputs.gh_environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Cache openapi-generator jar
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: openapi-gen-${{ hashFiles('Makefile') }}
+
+      - name: Validate + generate + test (dominio ${{ matrix.domain }})
+        run: |
+          make install
+          make generate-${{ matrix.domain }}
+          make test
+
+      - name: Build immagine ${{ matrix.domain }}
+        run: |
+          docker build --build-arg DOMAIN=${{ matrix.domain }} \
+            -t media-manager-${{ matrix.domain }}:${{ github.sha }} .
+
+      - name: Deploy verso ${{ needs.detect.outputs.gh_environment }}
+        env:
+          APP_ENV:    ${{ needs.detect.outputs.gh_environment }}
+          API_HOST:   ${{ secrets.API_HOST }}
+          API_KEY:    ${{ secrets.API_KEY }}
+          API_SECRET: ${{ secrets.API_SECRET }}
+        run: |
+          echo "Deploy ${{ matrix.domain }} -> ${{ needs.detect.outputs.gh_environment }} (${API_HOST:-<host non impostato>})"
+          # TODO: comando reale, es.
+          #   docker compose -f docker-compose.${{ matrix.domain }}.yml up -d --build
+
+      - name: Smoke / health check
+        run: |
+          echo "Health check post-deploy GET /${{ matrix.domain }}/health (placeholder)"
