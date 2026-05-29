@@ -84,7 +84,9 @@ jobs:
         with: { python-version: "3.12" }
       - name: Cache openapi-generator jar
         uses: actions/cache@v4
-        with: { path: .cache, key: openapi-gen-${{ hashFiles('Makefile') }} }
+        with:
+          path: .cache
+          key: openapi-gen-${{ hashFiles('Makefile') }}
 
       - name: Validate + generate + test (dominio ${{ matrix.domain }})
         run: |
@@ -109,4 +111,5 @@ jobs:
           #   docker compose -f docker-compose.${{ matrix.domain }}.yml up -d --build
 
       - name: Smoke / health check
-        run: echo "Health check post-deploy: GET /${{ matrix.domain }}/health (placeholder)"
+        run: |
+          echo "Health check post-deploy GET /${{ matrix.domain }}/health (placeholder)"

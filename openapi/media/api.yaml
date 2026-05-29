@@ -13,6 +13,7 @@ paths:
   /health:
     get:
       operationId: get_health
+      tags: [media]
       summary: Health check del dominio media
       responses:
         '200':
@@ -26,6 +27,7 @@ paths:
   /items:
     get:
       operationId: list_media
+      tags: [media]
       summary: List all media
       description: Recupera la lista di tutti i file media auto-scaricati.
       security:
