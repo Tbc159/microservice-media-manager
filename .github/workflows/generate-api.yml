@@ -65,7 +65,9 @@ jobs:
             echo "::notice::Domini da deployare: $CHANGED"
           fi
 
-  build-deploy:
+  # Gate contract+test su runner cloud, PRIMA di toccare gli host (che non eseguono
+  # il toolchain java/python: solo docker).
+  verify:
     needs: detect
     if: needs.detect.outputs.domains != '[]'
     runs-on: ubuntu-latest
@@ -73,8 +75,6 @@ jobs:
       fail-fast: false
       matrix:
         domain: ${{ fromJson(needs.detect.outputs.domains) }}
-    environment:
-      name: ${{ needs.detect.outputs.gh_environment }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -86,29 +86,49 @@ jobs:
         with:
           path: .cache
           key: openapi-gen-${{ hashFiles('Makefile') }}
-
       - name: Validate + generate + test (dominio ${{ matrix.domain }})
         run: |
           make install
           make generate-${{ matrix.domain }}
           make test
 
-      - name: Build immagine ${{ matrix.domain }}
-        run: |
-          docker build --build-arg DOMAIN=${{ matrix.domain }} \
-            -t media-manager-${{ matrix.domain }}:${{ github.sha }} .
+  # Deploy sull'host dell'ambiente via self-hosted runner (label = nome environment).
+  # Build sull'host (no registry). Idempotente: rete + proxy + container del dominio.
+  deploy:
+    needs: [detect, verify]
+    if: needs.detect.outputs.domains != '[]'
+    runs-on: [self-hosted, "${{ needs.detect.outputs.gh_environment }}"]
+    strategy:
+      fail-fast: false
+      max-parallel: 1          # un dominio per volta sull'host (proxy/rete condivisi)
+      matrix:
+        domain: ${{ fromJson(needs.detect.outputs.domains) }}
+    environment:
+      name: ${{ needs.detect.outputs.gh_environment }}   # gate reviewers su production
+    env:
+      APP_ENV: ${{ needs.detect.outputs.gh_environment }}
+      PROXY_HTTP_PORT: ${{ vars.PROXY_HTTP_PORT || '80' }}
+      API_HOST: ${{ secrets.API_HOST }}
+      API_KEY: ${{ secrets.API_KEY }}
+      API_SECRET: ${{ secrets.API_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Deploy verso ${{ needs.detect.outputs.gh_environment }}
-        env:
-          APP_ENV:    ${{ needs.detect.outputs.gh_environment }}
-          API_HOST:   ${{ secrets.API_HOST }}
-          API_KEY:    ${{ secrets.API_KEY }}
-          API_SECRET: ${{ secrets.API_SECRET }}
+      - name: Assicura rete + reverse-proxy (idempotente)
         run: |
-          echo "Deploy ${{ matrix.domain }} -> ${{ needs.detect.outputs.gh_environment }} (${API_HOST:-<host non impostato>})"
-          # TODO: comando reale, es.
-          #   docker compose -f docker-compose.${{ matrix.domain }}.yml up -d --build
+          docker network create mediamgr 2>/dev/null || true
+          bash deploy/proxy/gen-nginx-conf.sh
+          docker compose -f deploy/proxy/docker-compose.proxy.yml up -d
+
+      - name: Deploy dominio ${{ matrix.domain }} (build sull'host)
+        run: |
+          docker compose -f docker-compose.${{ matrix.domain }}.yml up -d --build
 
       - name: Smoke / health check
         run: |
-          echo "Health check post-deploy GET /${{ matrix.domain }}/health (placeholder)"
+          url="http://localhost:${PROXY_HTTP_PORT}/${{ matrix.domain }}/health"
+          for i in $(seq 1 10); do
+            if curl -fsS "$url"; then echo; echo "OK: $url"; exit 0; fi
+            echo "tentativo $i fallito, riprovo tra 3s..."; sleep 3
+          done
+          echo "::error::health check fallito su $url"; exit 1

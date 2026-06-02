@@ -7,7 +7,7 @@ GENERATOR_URL     := https://repo1.maven.org/maven2/org/openapitools/openapi-gen
 # Aggiungere openapi/social/api.yaml crea il dominio 'social' senza toccare nulla qui.
 DOMAINS := $(notdir $(patsubst %/,%,$(dir $(wildcard openapi/*/api.yaml))))
 
-.PHONY: help install domains validate generate-all clean test lint mock
+.PHONY: help install domains validate generate-all clean test lint mock proxy-config
 
 help: ## elenca i target
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -45,6 +45,9 @@ generate-all: validate ## valida + genera server+client per TUTTI i domini
 
 mock: ## avvia il mock (tutti i domini, risposte = examples OAS)
 	MOCK=1 python -m src.app
+
+proxy-config: ## (ri)genera deploy/proxy/nginx.conf dai domini scoperti
+	bash deploy/proxy/gen-nginx-conf.sh
 
 clean: ## rimuove il codice generato (sicuro: separazione fisica)
 	rm -rf $(GENERATED_DIR)

@@ -1,0 +1,18 @@
+# Reverse-proxy per host: UN container nginx che instrada /<dominio>/ ai container-dominio
+# sulla rete docker condivisa 'mediamgr'. La nginx.conf e' generata da gen-nginx-conf.sh.
+# Pubblica la porta host PROXY_HTTP_PORT (default 80). Avvio idempotente: `docker compose up -d`.
+services:
+  proxy:
+    image: nginx:alpine
+    container_name: mediamgr-proxy
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${PROXY_HTTP_PORT:-80}:80"
+    networks:
+      - mediamgr
+    restart: unless-stopped
+
+networks:
+  mediamgr:
+    external: true
