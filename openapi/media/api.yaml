@@ -78,6 +78,7 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
+      x-apikeyInfoFunc: src.security.api_key_info
   schemas:
     Health:
       type: object
