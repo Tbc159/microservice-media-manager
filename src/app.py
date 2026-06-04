@@ -33,6 +33,7 @@ def discover_domains():
 def create_app(domains=None, mock=False):
     domains = domains if domains is not None else discover_domains()
     app = connexion.FlaskApp(__name__, specification_dir=str(OPENAPI_DIR))
+    app.app.url_map.strict_slashes = False
     for domain in domains:
         resolver = (
             connexion.resolver.MockResolver(mock_all=True)

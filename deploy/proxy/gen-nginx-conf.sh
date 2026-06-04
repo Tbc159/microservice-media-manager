@@ -27,7 +27,7 @@ fi
   for dom in $DOMAINS; do
     # nome variabile nginx: solo [A-Za-z0-9_]
     var=$(printf '%s' "$dom" | tr -c 'A-Za-z0-9' '_')
-    echo "    location /v0/$dom/ {"
+    echo "    location /v0/$dom {"
     echo "        set \$up_$var $dom:8080;"
     echo "        # \$request_uri mantiene il prefisso /v0/$dom (coerente con base_path=/v0)"
     echo "        proxy_pass http://\$up_$var\$request_uri;"
