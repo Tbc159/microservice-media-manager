@@ -126,7 +126,7 @@ jobs:
 
       - name: Smoke / health check
         run: |
-          url="http://localhost:${PROXY_HTTP_PORT}/${{ matrix.domain }}/health"
+          url="http://localhost:${PROXY_HTTP_PORT}/v0/${{ matrix.domain }}/health"
           for i in $(seq 1 10); do
             if curl -fsS "$url"; then echo; echo "OK: $url"; exit 0; fi
             echo "tentativo $i fallito, riprovo tra 3s..."; sleep 3

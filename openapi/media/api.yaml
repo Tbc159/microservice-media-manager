@@ -1,16 +1,16 @@
 openapi: 3.0.3
 info:
   title: Media API
-  version: 1.0.0
+  version: 0.1.0
   description: |
     API del dominio "media": gestione dei file media auto-scaricati.
-    Il prefisso di dominio (/media) NON e' scritto qui: viene applicato come
-    base_path al wiring (src/app.py) e instradato dal reverse-proxy. Le path
-    qui sotto sono relative al dominio.
+    base_path /v0 e' applicato da src/app.py; i path qui sotto sono relativi
+    a quel prefisso. URL effettivi: /v0/media, /v0/media/health.
 servers:
-  - url: /media
+  - url: /v0
+    description: Development server (base path applicato da connexion)
 paths:
-  /health:
+  /media/health:
     get:
       operationId: get_health
       tags: [media]
@@ -24,11 +24,11 @@ paths:
                 $ref: '#/components/schemas/Health'
               example:
                 status: ok
-  /items:
+  /media:
     get:
       operationId: list_media
       tags: [media]
-      summary: List all media
+      summary: Lista tutti i file media
       description: Recupera la lista di tutti i file media auto-scaricati.
       security:
         - ApiKeyAuth: []
@@ -41,6 +41,37 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/MediaItem'
+              example:
+                - id: 2
+                  name: "data_NomeFile.m4a"
+                  creation_date_s: 1779873651
+                  download_link: "http://host/download/data_NomeFile.m4a"
+                  status: "draft"
+                  pubblicazione:
+                    titolo: null
+                    description: null
+                    cover_image: null
+                    publishing_date_s: null
+                - id: 1
+                  name: "data_AltroFile.m4a"
+                  creation_date_s: 1779873600
+                  download_link: "http://host/download/data_AltroFile.m4a"
+                  status: "published"
+                  pubblicazione:
+                    titolo: "Titolo puntata"
+                    description: "Descrizione puntata"
+                    cover_image: "http://host/covers/data_AltroFile.jpg"
+                    publishing_date_s: 1879873651
+                - id: 0
+                  name: "data_PrimoFile.m4a"
+                  creation_date_s: 1779873500
+                  download_link: "http://host/download/data_PrimoFile.m4a"
+                  status: "processing"
+                  pubblicazione:
+                    titolo: null
+                    description: null
+                    cover_image: null
+                    publishing_date_s: null
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -65,7 +96,7 @@ components:
           example: "data_NomeFile.m4a"
         creation_date_s:
           type: integer
-          description: Timestamp in secondi.
+          description: Timestamp Unix in secondi.
           example: 1779873651
         download_link:
           type: string
@@ -76,6 +107,7 @@ components:
           enum: [draft, processing, published]
         pubblicazione:
           type: object
+          nullable: true
           properties:
             titolo:
               type: string
@@ -88,4 +120,9 @@ components:
             cover_image:
               type: string
               nullable: true
-              description: Puo' contenere l'URL, uno stato di autogenerazione o upload.
+              description: URL immagine, stato autogenerazione o upload.
+            publishing_date_s:
+              type: integer
+              nullable: true
+              description: Timestamp Unix di pubblicazione in secondi.
+              example: 1879873651

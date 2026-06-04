@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Genera deploy/proxy/nginx.conf dai domini scoperti (openapi/<dominio>/api.yaml).
-# Zero-hardcoding: aggiungere openapi/social/api.yaml -> la rotta /social/ compare da sola.
+# Zero-hardcoding: aggiungere openapi/social/api.yaml -> la rotta /v0/social/ compare da sola.
 # Eseguibile in locale (`make proxy-config`) e nella CI prima di avviare il proxy.
 set -euo pipefail
 
@@ -16,7 +16,7 @@ fi
 
 {
   echo "# === FILE GENERATO da deploy/proxy/gen-nginx-conf.sh — non editare a mano. ==="
-  echo "# Reverse-proxy per host: instrada /<dominio>/ al container <dominio>:8080"
+  echo "# Reverse-proxy per host: instrada /v0/<dominio>/ al container <dominio>:8080"
   echo "# sulla rete docker interna 'mediamgr' (risoluzione nomi a runtime via DNS Docker)."
   echo "server {"
   echo "    listen 80;"
@@ -27,9 +27,9 @@ fi
   for dom in $DOMAINS; do
     # nome variabile nginx: solo [A-Za-z0-9_]
     var=$(printf '%s' "$dom" | tr -c 'A-Za-z0-9' '_')
-    echo "    location /$dom/ {"
+    echo "    location /v0/$dom/ {"
     echo "        set \$up_$var $dom:8080;"
-    echo "        # \$request_uri mantiene il prefisso /$dom (coerente con base_path=/$dom)"
+    echo "        # \$request_uri mantiene il prefisso /v0/$dom (coerente con base_path=/v0)"
     echo "        proxy_pass http://\$up_$var\$request_uri;"
     echo "        proxy_set_header Host \$host;"
     echo "        proxy_set_header X-Real-IP \$remote_addr;"
