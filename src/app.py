@@ -9,7 +9,7 @@ Due modalita':
     unico processo (`python -m src.app`), utile per mock e test rapidi.
   - container (dev/coll/prod): DOMAIN=<dominio> -> monta SOLO quel dominio,
     cosi' ogni container serve un solo microservizio. Il reverse-proxy instrada
-    host/<dominio>/* -> container, mantenendo il prefisso (base_path).
+    host/v0/<dominio>/* -> container (base_path /v0).
 
 Variabili d'ambiente:
   DOMAIN  un solo dominio da montare (default: tutti quelli scoperti)
@@ -41,7 +41,7 @@ def create_app(domains=None, mock=False):
         )
         app.add_api(
             f"{domain}/api.yaml",
-            base_path=f"/{domain}",
+            base_path="/v0",
             resolver=resolver,
             strict_validation=True,
             validate_responses=True,

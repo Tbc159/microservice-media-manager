@@ -16,6 +16,33 @@ class MediaService:
                     "titolo": None,
                     "description": None,
                     "cover_image": None,
+                    "publishing_date_s": None,
                 },
-            }
+            },
+            {
+                "id": 1,
+                "name": "data_AltroFile.m4a",
+                "creation_date_s": 1779873600,
+                "download_link": "http://host/download/data_AltroFile.m4a",
+                "status": "published",
+                "pubblicazione": {
+                    "titolo": "Titolo puntata",
+                    "description": "Descrizione puntata",
+                    "cover_image": "http://host/covers/data_AltroFile.jpg",
+                    "publishing_date_s": 1879873651,
+                },
+            },
+            {
+                "id": 0,
+                "name": "data_PrimoFile.m4a",
+                "creation_date_s": 1779873500,
+                "download_link": "http://host/download/data_PrimoFile.m4a",
+                "status": "processing",
+                "pubblicazione": {
+                    "titolo": None,
+                    "description": None,
+                    "cover_image": None,
+                    "publishing_date_s": None,
+                },
+            },
         ]

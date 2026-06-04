@@ -68,7 +68,7 @@ jobs:
   build-deploy:
     needs: detect
     if: needs.detect.outputs.domains != '[]'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, "${{ needs.detect.outputs.gh_environment }}"]
     strategy:
       fail-fast: false
       matrix:
@@ -105,10 +105,10 @@ jobs:
           API_KEY:    ${{ secrets.API_KEY }}
           API_SECRET: ${{ secrets.API_SECRET }}
         run: |
-          echo "Deploy ${{ matrix.domain }} -> ${{ needs.detect.outputs.gh_environment }} (${API_HOST:-<host non impostato>})"
-          # TODO: comando reale, es.
-          #   docker compose -f docker-compose.${{ matrix.domain }}.yml up -d --build
+          docker network create mediamgr 2>/dev/null || true
+          docker compose -f docker-compose.${{ matrix.domain }}.yml up -d --build
 
       - name: Smoke / health check
         run: |
-          echo "Health check post-deploy GET /${{ matrix.domain }}/health (placeholder)"
+          sleep 5
+          curl -f http://localhost:3000/v0/${{ matrix.domain }}/health
