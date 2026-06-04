@@ -27,9 +27,19 @@ fi
   for dom in $DOMAINS; do
     # nome variabile nginx: solo [A-Za-z0-9_]
     var=$(printf '%s' "$dom" | tr -c 'A-Za-z0-9' '_')
-    echo "    location /v0/$dom {"
+    # Exact match: evita il 301 automatico di nginx per proxy_pass senza slash finale
+    echo "    location = /v0/$dom {"
     echo "        set \$up_$var $dom:8080;"
-    echo "        # \$request_uri mantiene il prefisso /v0/$dom (coerente con base_path=/v0)"
+    echo "        proxy_pass http://\$up_$var\$request_uri;"
+    echo "        proxy_set_header Host \$host;"
+    echo "        proxy_set_header X-Real-IP \$remote_addr;"
+    echo "        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;"
+    echo "        proxy_set_header X-Forwarded-Proto \$scheme;"
+    echo "    }"
+    echo ""
+    # Prefix match: /v0/<dom>/health, /v0/<dom>/<id>, ecc.
+    echo "    location /v0/$dom/ {"
+    echo "        set \$up_$var $dom:8080;"
     echo "        proxy_pass http://\$up_$var\$request_uri;"
     echo "        proxy_set_header Host \$host;"
     echo "        proxy_set_header X-Real-IP \$remote_addr;"
