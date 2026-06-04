@@ -329,6 +329,49 @@ Due livelli di gate complementari:
 
 ---
 
+## 10.1 Deploy / infrastruttura (self-hosted runner + reverse-proxy)
+
+Runbook per (ri)configurare il deploy da zero. Dettaglio operativo in [`deploy/README.md`](deploy/README.md).
+
+### Topologia (per host)
+Ogni ambiente è **un host** con una rete docker `mediamgr`, un container **nginx** (reverse-proxy)
+e un container per dominio:
+
+```
+host:${PROXY_HTTP_PORT:-80}  ──►  nginx (proxy)  ──►  /media/  → media:8080   (DOMAIN=media,  base_path=/media)
+                                                  └─►  /social/ → social:8080  (DOMAIN=social, base_path=/social)
+                                   rete docker interna "mediamgr"
+```
+- I container-dominio si chiamano come il dominio (`container_name: media`) e fanno solo `expose: 8080`:
+  l'unico ingresso è il proxy. nginx usa il DNS interno di Docker e mantiene il prefisso
+  (`proxy_pass http://media:8080…$request_uri`), coerente con `base_path=/<dominio>`.
+- La `nginx.conf` è **generata dai domini** (`make proxy-config` → `deploy/proxy/gen-nginx-conf.sh`):
+  aggiungere un dominio non richiede edit manuali del proxy.
+
+### Mapping branch → ambiente → runner
+| Branch | Environment | Label runner | Host |
+|--------|-------------|--------------|------|
+| `develop` | `staging` | `self-hosted,staging` | macchina dev locale |
+| `coll` | `collaudo` | `self-hosted,collaudo` | LXC collaudo |
+| `main` | `production` | `self-hosted,production` | LXC produzione (gate reviewers) |
+
+### Pipeline di deploy (`generate-api.yml`)
+`detect` (domini impattati + ambiente) → `verify` (runner cloud: generate+test, gate) →
+`deploy` (self-hosted sull'host: `gen-nginx-conf` + `compose up -d` del proxy + `compose up -d --build`
+del dominio + smoke `curl /<dominio>/health`). Build **sull'host**, nessun registry. Deploy
+**selettivo**: solo i domini cambiati; un cambio a file condivisi rideploya tutti.
+
+### Setup da zero (sintesi — vedi `deploy/README.md`)
+1. Su ogni host: Docker+compose, utente nel gruppo `docker`, `docker network create mediamgr`.
+2. Registra il self-hosted runner con label = nome environment
+   (`./config.sh --labels self-hosted,<env>`), avvialo come servizio.
+3. Imposta i secret per environment (`API_HOST/API_KEY/API_SECRET`) e, se la 80 non va bene,
+   la variabile `PROXY_HTTP_PORT`.
+4. Push sul branch dell'ambiente → deploy automatico.
+
+⚠️ I self-hosted runner su repo pubblici sono rischiosi: il deploy parte solo su `push` ai branch
+protetti, ma è consigliato rendere il repo **privato**.
+
 ## 11. Strategia di test
 
 Piramide dei test: i livelli economici filtrano presto, quelli costosi girano tardi.
