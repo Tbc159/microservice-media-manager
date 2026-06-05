@@ -126,7 +126,11 @@ jobs:
         run: |
           docker network create mediamgr 2>/dev/null || true
           bash deploy/proxy/gen-nginx-conf.sh
-          docker compose -f deploy/proxy/docker-compose.proxy.yml up -d
+          # --force-recreate: nginx.conf e' bind-mount di un singolo file; actions/checkout
+          # lo riscrive con un nuovo inode a ogni deploy, ma un container gia' attivo resta
+          # agganciato al vecchio inode (reload/restart NON bastano). Ricreare il container
+          # rimonta l'inode corrente, garantendo che le rotte dei domini nuovi siano caricate.
+          docker compose -f deploy/proxy/docker-compose.proxy.yml up -d --force-recreate
 
       - name: Assicura object storage MinIO (coll/prod, idempotente)
         if: env.APP_ENV != 'staging'
