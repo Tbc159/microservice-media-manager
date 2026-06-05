@@ -2,7 +2,7 @@ name: API Draft - Fast Scaffold
 
 on:
   push:
-    branches: ["feature/**", "draft/**"]
+    branches: ["feature/**", "draft/**", "infrastructure/**"]
   workflow_dispatch:
 
 jobs:

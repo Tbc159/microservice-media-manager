@@ -75,16 +75,10 @@ paths:
 components:
   securitySchemes:
     ApiKeyAuth:
-      type: apiKey
-      in: header
-      name: X-API-Key
-      x-apikeyInfoFunc: src.security.api_key_info
+      $ref: '../shared/components.yaml#/components/securitySchemes/ApiKeyAuth'
   schemas:
     Health:
-      type: object
-      properties:
-        status:
-          type: string
+      $ref: '../shared/components.yaml#/components/schemas/Health'
     MediaItem:
       type: object
       required: [id, name]

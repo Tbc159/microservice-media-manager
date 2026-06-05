@@ -1,0 +1,44 @@
+# Componenti OAS condivisi tra tutti i domini.
+# Referenziare con: $ref: '../shared/components.yaml#/components/<categoria>/<nome>'
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      x-apikeyInfoFunc: src.security.api_key_info
+
+  schemas:
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string
+
+    PaginationMeta:
+      type: object
+      required: [page, page_size, total, total_pages]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          example: 1
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 100
+          example: 20
+        total:
+          type: integer
+          minimum: 0
+          example: 45
+        total_pages:
+          type: integer
+          minimum: 0
+          example: 3

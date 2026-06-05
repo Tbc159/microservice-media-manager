@@ -1,0 +1,37 @@
+# Unita' deployabile del dominio "source".
+# Ingresso solo via reverse-proxy (deploy/proxy): il container espone 8080 sulla rete
+# 'mediamgr' col nome di servizio = dominio, niente porte host pubblicate qui.
+# Deploy selettivo: la CI rideploya SOLO questo compose quando cambia il dominio source.
+services:
+  source:
+    build:
+      context: .
+      args:
+        DOMAIN: source
+    image: media-manager-source:latest
+    container_name: source
+    environment:
+      DOMAIN: source
+      PORT: 8080
+      API_KEY: ${API_KEY:-}
+      API_HOST: ${API_HOST:-}
+      API_SECRET: ${API_SECRET:-}
+      # Attivare quando DB + FS saranno montati (vedere commento volumes sotto):
+      SOURCE_DB_PATH: ${SOURCE_DB_PATH:-}
+      SOURCE_MEDIA_PATH: ${SOURCE_MEDIA_PATH:-}
+    env_file:
+      - config/source/${APP_ENV:-staging}.env
+    expose:
+      - "8080"
+    # Volumi abilitati al momento dell'integrazione reale DB + FS.
+    # SOURCE_DB_PATH_HOST e SOURCE_MEDIA_PATH_HOST vanno nei secret GitHub dell'environment.
+    # volumes:
+    #   - ${SOURCE_DB_PATH_HOST:-/opt/mediamgr/data/source.db}:/data/source.db:rw
+    #   - ${SOURCE_MEDIA_PATH_HOST:-/opt/mediamgr/media}:/data/media:ro
+    networks:
+      - mediamgr
+    restart: unless-stopped
+
+networks:
+  mediamgr:
+    external: true
