@@ -97,5 +97,7 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
   `develop → coll`.
 - Implementare `POST /v0/source/media` (upload) sfruttando `put_object`/`get_upload_url` già
   predisposti.
-- Decidere il modello di governance (relax develop/coll + validatore su main).
+- Governance: deciso *solo documentazione* per ora (nessuna modifica alla branch protection);
+  percorso pianificato = **validatore esterno** (account indipendente, vedi
+  [repository-governance.md](repository-governance.md)).
 - Sostituire i placeholder dei secret (`API_KEY=REPLACE_ME`) con valori reali.
