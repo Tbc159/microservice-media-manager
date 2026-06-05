@@ -1,0 +1,176 @@
+openapi: 3.0.3
+info:
+  title: Source API
+  version: 0.1.0
+  description: |
+    Dominio "source": bridge verso file system e database dei media sorgente.
+    base_path /v0 applicato da src/app.py; i path qui sono relativi.
+    URL effettivi: /v0/source/health, /v0/source/media.
+servers:
+  - url: /v0
+    description: base path applicato da connexion
+
+paths:
+  /source/health:
+    get:
+      operationId: get_health
+      tags: [source]
+      summary: Health check del dominio source
+      responses:
+        '200':
+          description: Servizio attivo
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Health'
+              example:
+                status: ok
+
+  /source/media:
+    get:
+      operationId: query_source_media
+      tags: [source]
+      summary: Recupera media sorgente filtrati per tipo e titolo opzionale
+      description: |
+        Restituisce sempre un envelope paginato (items puo' essere vuoto, non e' un errore).
+        - Solo `type`: tutti i record con quel MIME type.
+        - Con `title`: filtra per titolo esatto.
+        - `page` e `page_size` controllano la finestra di risultati.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: type
+          in: query
+          required: true
+          description: MIME type dei contenuti da recuperare
+          schema:
+            type: string
+            enum: [audio/m4a, audio/mp3, video/mp4]
+            example: audio/m4a
+        - name: title
+          in: query
+          required: false
+          description: Filtra per titolo esatto. Omettere per tutti i record del tipo.
+          schema:
+            type: string
+            example: "Puntata pilota"
+        - name: page
+          in: query
+          required: false
+          description: Numero di pagina (1-based)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+            example: 1
+        - name: page_size
+          in: query
+          required: false
+          description: Numero di risultati per pagina (max 100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+            example: 20
+      responses:
+        '200':
+          description: Risultati paginati; items puo' essere vuoto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceMediaPagedResponse'
+              example:
+                items:
+                  - id: 1
+                    title: "Puntata pilota"
+                    filename: "2024-01-puntata-pilota.m4a"
+                    media_type: "audio/m4a"
+                    size_bytes: 48234567
+                    duration_s: 3012
+                    created_at_s: 1700000000
+                    status: "ready"
+                    stream_url: "https://storage.example/media-source/audio/m4a/2024-01-puntata-pilota.m4a?X-Amz-Signature=..."
+                    metadata: {}
+                pagination:
+                  page: 1
+                  page_size: 20
+                  total: 2
+                  total_pages: 1
+        '400':
+          description: Parametro `type` mancante o non valido
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      $ref: '../shared/components.yaml#/components/securitySchemes/ApiKeyAuth'
+
+  schemas:
+    SourceMediaItem:
+      type: object
+      required: [id, title, filename, media_type, created_at_s, status]
+      properties:
+        id:
+          type: integer
+          description: ID univoco del record DB
+          example: 1
+        title:
+          type: string
+          description: Titolo del contenuto
+          example: "Puntata pilota"
+        filename:
+          type: string
+          description: Nome del file originale
+          example: "2024-01-puntata-pilota.m4a"
+        media_type:
+          type: string
+          description: MIME type
+          example: "audio/m4a"
+        size_bytes:
+          type: integer
+          nullable: true
+          description: Dimensione in byte; null se non ancora calcolata
+          example: 48234567
+        duration_s:
+          type: integer
+          nullable: true
+          description: Durata del media in secondi; null se non ancora estratta
+          example: 3012
+        created_at_s:
+          type: integer
+          description: Timestamp Unix di creazione record
+          example: 1700000000
+        status:
+          type: string
+          enum: [ready, processing, error]
+          description: Stato del contenuto nel ciclo di vita
+          example: "ready"
+        stream_url:
+          type: string
+          format: uri
+          nullable: true
+          description: >
+            URL pre-firmato per lo streaming diretto dal browser (scade in 1h, supporta
+            Range request per seek/resume). Null quando lo storage e' locale (dev) e non
+            espone URL firmati.
+          example: "https://storage.example/media-source/audio/m4a/file.m4a?X-Amz-Signature=..."
+        metadata:
+          type: object
+          nullable: true
+          description: Campi estensibili per future integrazioni DB
+          additionalProperties: true
+
+    SourceMediaPagedResponse:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceMediaItem'
+        pagination:
+          $ref: '../shared/components.yaml#/components/schemas/PaginationMeta'

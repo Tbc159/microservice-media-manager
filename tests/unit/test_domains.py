@@ -10,3 +10,7 @@ def _discover():
 
 def test_media_domain_is_discovered():
     assert "media" in _discover()
+
+
+def test_source_domain_is_discovered():
+    assert "source" in _discover()

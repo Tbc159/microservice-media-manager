@@ -1,0 +1,40 @@
+# Unita' deployabile del dominio "source".
+# Ingresso solo via reverse-proxy (deploy/proxy): il container espone 8080 sulla rete
+# 'mediamgr' col nome di servizio = dominio, niente porte host pubblicate qui.
+# Deploy selettivo: la CI rideploya SOLO questo compose quando cambia il dominio source.
+#
+# Storage: in staging STORAGE_BACKEND=local (FS nel volume). In coll/prod il dominio
+# parla con il container 'minio' (deploy/storage) via DNS interno sulla rete mediamgr.
+# I path/credenziali concreti arrivano da config/source/<env>.env + secret dell'Environment.
+services:
+  source:
+    build:
+      context: .
+      args:
+        DOMAIN: source
+    image: media-manager-source:latest
+    container_name: source
+    environment:
+      DOMAIN: source
+      PORT: 8080
+      API_KEY: ${API_KEY:-}
+      API_HOST: ${API_HOST:-}
+      API_SECRET: ${API_SECRET:-}
+      # Credenziali storage S3/MinIO (secret dell'Environment; vuote in dev/local).
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-}
+    env_file:
+      - config/source/${APP_ENV:-staging}.env
+    expose:
+      - "8080"
+    volumes:
+      # Volume unico: contiene il DB SQLite (/data/source.db) e, in dev, i media (/data/media).
+      # SOURCE_DATA_PATH = path host (impostato dalla CI; default relativo per il dev locale).
+      - ${SOURCE_DATA_PATH:-./data/source}:/data
+    networks:
+      - mediamgr
+    restart: unless-stopped
+
+networks:
+  mediamgr:
+    external: true
