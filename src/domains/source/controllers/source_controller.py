@@ -1,9 +1,13 @@
+"""Controller del dominio source: thin layer.
+
+Il service viene assemblato dal factory (composition root), che sceglie repository e
+storage backend in base all'ambiente. Il controller non conosce le implementazioni.
+"""
 from typing import Optional
 
-from src.domains.source.repositories.mock_repository import MockSourceMediaRepository
-from src.domains.source.services.source_service import SourceService
+from src.domains.source.factory import build_source_service
 
-_service = SourceService(repo=MockSourceMediaRepository())
+_service = build_source_service()
 
 
 def query_source_media(

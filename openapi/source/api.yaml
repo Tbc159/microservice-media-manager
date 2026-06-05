@@ -86,9 +86,11 @@ paths:
                     title: "Puntata pilota"
                     filename: "2024-01-puntata-pilota.m4a"
                     media_type: "audio/m4a"
-                    file_path: "/data/media/2024-01-puntata-pilota.m4a"
                     size_bytes: 48234567
+                    duration_s: 3012
                     created_at_s: 1700000000
+                    status: "ready"
+                    stream_url: "https://storage.example/media-source/audio/m4a/2024-01-puntata-pilota.m4a?X-Amz-Signature=..."
                     metadata: {}
                 pagination:
                   page: 1
@@ -110,7 +112,7 @@ components:
   schemas:
     SourceMediaItem:
       type: object
-      required: [id, title, filename, media_type, file_path, created_at_s]
+      required: [id, title, filename, media_type, created_at_s, status]
       properties:
         id:
           type: integer
@@ -122,25 +124,40 @@ components:
           example: "Puntata pilota"
         filename:
           type: string
-          description: Nome del file sul FS
+          description: Nome del file originale
           example: "2024-01-puntata-pilota.m4a"
         media_type:
           type: string
           description: MIME type
           example: "audio/m4a"
-        file_path:
-          type: string
-          description: Path assoluto del file nel volume montato
-          example: "/data/media/2024-01-puntata-pilota.m4a"
         size_bytes:
           type: integer
           nullable: true
           description: Dimensione in byte; null se non ancora calcolata
           example: 48234567
+        duration_s:
+          type: integer
+          nullable: true
+          description: Durata del media in secondi; null se non ancora estratta
+          example: 3012
         created_at_s:
           type: integer
           description: Timestamp Unix di creazione record
           example: 1700000000
+        status:
+          type: string
+          enum: [ready, processing, error]
+          description: Stato del contenuto nel ciclo di vita
+          example: "ready"
+        stream_url:
+          type: string
+          format: uri
+          nullable: true
+          description: >
+            URL pre-firmato per lo streaming diretto dal browser (scade in 1h, supporta
+            Range request per seek/resume). Null quando lo storage e' locale (dev) e non
+            espone URL firmati.
+          example: "https://storage.example/media-source/audio/m4a/file.m4a?X-Amz-Signature=..."
         metadata:
           type: object
           nullable: true

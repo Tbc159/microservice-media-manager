@@ -1,10 +1,11 @@
 from src.domains.source.controllers.health_controller import get_health
 from src.domains.source.repositories.mock_repository import MockSourceMediaRepository
 from src.domains.source.services.source_service import SourceService
+from src.domains.source.storage.local_backend import LocalStorageBackend
 
 
 def _svc() -> SourceService:
-    return SourceService(repo=MockSourceMediaRepository())
+    return SourceService(repo=MockSourceMediaRepository(), storage=LocalStorageBackend())
 
 
 def test_health_returns_ok():
@@ -62,9 +63,26 @@ def test_pagination_fields_present():
 
 def test_item_schema_required_fields():
     result = _svc().query(media_type="audio/m4a")
-    required = {"id", "title", "filename", "media_type", "file_path", "created_at_s"}
+    required = {"id", "title", "filename", "media_type", "created_at_s", "status"}
     for item in result["items"]:
         assert required.issubset(item.keys()), f"Campi mancanti in {item}"
         assert isinstance(item["id"], int)
         assert isinstance(item["title"], str)
         assert isinstance(item["created_at_s"], int)
+        assert item["status"] in {"ready", "processing", "error"}
+
+
+def test_object_key_never_exposed():
+    # object_key e' un dettaglio interno allo storage: non deve uscire dall'API.
+    result = _svc().query(media_type="audio/m4a")
+    for item in result["items"]:
+        assert "object_key" not in item
+        assert "file_path" not in item
+
+
+def test_stream_url_present_null_with_local_backend():
+    # Con storage locale (dev) stream_url e' presente ma null.
+    result = _svc().query(media_type="audio/m4a")
+    for item in result["items"]:
+        assert "stream_url" in item
+        assert item["stream_url"] is None

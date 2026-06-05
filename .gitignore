@@ -1,6 +1,8 @@
 # Codice generato: rigenerato in CI/CD, non versionato (vedi README sez. 9).
 generated/
 .cache/
+# Dati runtime: SQLite, media locali, dati MinIO. Persistiti su volume, mai versionati.
+data/
 __pycache__/
 *.pyc
 .venv/
