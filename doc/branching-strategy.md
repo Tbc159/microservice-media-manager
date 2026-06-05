@@ -55,19 +55,11 @@ l'approvazione manuale del deploy (Required reviewers sull'environment `producti
 
 **Regola:** PR aperta = solo test CI (nessun deploy). Merge = push sul branch d'ambiente = deploy.
 
-## Stato attuale dei branch
+## Stato corrente dei branch
 
-> Aggiornato al 2026-06-05. Vedi [changelog.md](changelog.md) per il dettaglio.
-
-| Branch | Domini | Note |
-|--------|--------|------|
-| `develop` | `media`, `source` | allineato all'ultimo lavoro (URL `/v0`, deploy reale, SQLite+storage) |
-| `coll` | `media` (versione precedente) | indietro rispetto a develop: promozione da pianificare |
-| `main` | `media` (versione precedente) | indietro rispetto a develop |
-
-La promozione `develop → coll` richiederà prima i secret storage (`MINIO_ROOT_USER`,
-`MINIO_ROOT_PASSWORD`, `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY`) nell'Environment `collaudo`,
-perché in collaudo `source` usa MinIO (vedi [domains-and-api.md](domains-and-api.md)).
+Lo stato puntuale — quali domini sono deployati in ciascun ambiente e le promozioni in sospeso —
+cambia nel tempo e vive nel [changelog](changelog.md), non qui: questo documento descrive il
+**modello** di branching, valido a prescindere dallo stato di deploy.
 
 ## Branch protection e review
 
