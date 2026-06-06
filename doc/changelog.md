@@ -93,6 +93,26 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
   allineamento della **gestione** su `coll`/`main` (PR dedicate: solo doc indipendenti dal codice).
 - Test saliti a **43** (unit create/duplicate/get/presigned + integration upload).
 
+## 9. Singolo record + byte (play/download) + governance generalizzata (2026-06-06)
+
+- **`GET /v0/source/media/{id}`**: metadati del singolo record (colma il buco: prima c'era solo il
+  listing). `SourceService.get_item()`.
+- **`GET /v0/source/media/{id}/content`**: i byte del media. Default **inline** (play),
+  `?download=1|true|yes|on` → **allegato** (save) — stessi byte, cambia solo `Content-Disposition`.
+  Ibrido: `302` verso URL pre-firmato in coll/prod (client diretto allo storage), **streaming** con
+  **Range** (`206`) in dev via `flask.send_file`; `404` se id assente o byte mancanti.
+- **`SourceMediaItem`**: rimosso `stream_url`, aggiunti **`content_url`** (inline) e
+  **`download_url`** (attachment) — URL relativi verso `/content`. Storage: `get_download_url`
+  (attachment) + `local_path`; service `content(id, download)` con `DownloadTarget`.
+- **Verifica reale**: upload di un `.m4a` da ~73 MB da macchina esterna → record `id 1`,
+  `size_bytes` = dimensione su disco (integrità byte), su DB svuotato (autoincrement resettato).
+- **Governance generalizzata**: `repository-governance.md` reso riusabile (owner al posto di
+  `Tbc159`, placeholder `$OWNER/$REPO`).
+- **Direzione concordata** (prossima iterazione): `source` come dominio **interno**, `/v0/media`
+  come **BFF pubblico** che lo media (download via redirect; relay solo in dev). Vedi
+  [domains-and-api.md](domains-and-api.md).
+- Test a **55** (unit get_item/content + integration metadati + content inline/attachment/Range/404).
+
 ## Stato runtime attuale (staging)
 
 | Componente | Stato |

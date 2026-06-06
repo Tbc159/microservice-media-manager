@@ -90,12 +90,14 @@ def test_object_key_never_exposed():
         assert "file_path" not in item
 
 
-def test_stream_url_present_null_with_local_backend():
-    # Con storage locale (dev) stream_url e' presente ma null.
+def test_content_urls_exposed_not_object_key():
+    # Ogni item espone i link content_url/download_url (verso /content), mai object_key.
     result = _svc().query(media_type="audio/m4a")
     for item in result["items"]:
-        assert "stream_url" in item
-        assert item["stream_url"] is None
+        assert item["content_url"] == f"/v0/source/media/{item['id']}/content"
+        assert item["download_url"] == f"/v0/source/media/{item['id']}/content?download=1"
+        assert "stream_url" not in item
+        assert "object_key" not in item
 
 
 def test_create_inserts_metadata_and_writes_bytes(tmp_path):
@@ -108,7 +110,7 @@ def test_create_inserts_metadata_and_writes_bytes(tmp_path):
     assert item["size_bytes"] == 3
     assert item["duration_s"] == 10
     assert item["status"] == "ready"
-    assert item["stream_url"] is None        # storage locale
+    assert item["content_url"] == f"/v0/source/media/{item['id']}/content"
     assert "object_key" not in item          # interno, mai esposto
     assert (tmp_path / "audio/m4a/x.m4a").read_bytes() == b"abc"
 
@@ -132,3 +134,36 @@ def test_presigned_upload_url_none_on_local(tmp_path):
     # Predisposizione pre-signed: con storage locale (dev) non c'e' URL firmato.
     svc = _svc_fs(tmp_path)
     assert svc.presigned_upload_url(media_type="audio/m4a", filename="x.m4a") is None
+
+
+def test_get_item_returns_metadata_or_none(tmp_path):
+    svc = _svc_fs(tmp_path)
+    svc.create(title="G", media_type="audio/m4a", filename="g.m4a", data=b"x")
+    rid = next(i["id"] for i in svc.query(media_type="audio/m4a")["items"] if i["title"] == "G")
+    item = svc.get_item(rid)
+    assert item is not None and item["title"] == "G"
+    assert item["content_url"] == f"/v0/source/media/{rid}/content"
+    assert svc.get_item(99999) is None
+
+
+def test_content_local_returns_target_inline_and_attachment(tmp_path):
+    svc = _svc_fs(tmp_path)
+    svc.create(title="D", media_type="audio/m4a", filename="d.m4a", data=b"hello")
+    rid = next(i["id"] for i in svc.query(media_type="audio/m4a")["items"] if i["title"] == "D")
+    for download in (False, True):  # in locale entrambi -> local_path (la disposition e' nel controller)
+        target = svc.content(rid, download=download)
+        assert target is not None
+        assert target.redirect_url is None          # storage locale: nessun redirect
+        assert target.local_path is not None
+        assert target.filename == "d.m4a"
+        with open(target.local_path, "rb") as fh:
+            assert fh.read() == b"hello"
+
+
+def test_content_absent_id_returns_none(tmp_path):
+    assert _svc_fs(tmp_path).content(99999, download=False) is None
+
+
+def test_content_record_without_bytes_returns_none(tmp_path):
+    # I record seed del mock non hanno file su storage -> content None (404 a valle).
+    assert _svc_fs(tmp_path).content(1, download=False) is None

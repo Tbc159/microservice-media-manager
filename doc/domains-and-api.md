@@ -67,7 +67,8 @@ Risposta `200`: `SourceMediaPagedResponse` = `{ items: SourceMediaItem[], pagina
 | `duration_s` | int\|null | durata media (s) |
 | `created_at_s` | int | timestamp creazione |
 | `status` | enum | `ready` \| `processing` \| `error` |
-| `stream_url` | string(uri)\|null | URL pre-firmato per streaming diretto (vedi sotto); `null` con storage locale |
+| `content_url` | string | URL (relativo) dei byte **inline** per il player (`/…/{id}/content`) |
+| `download_url` | string | URL (relativo) dei byte come **allegato** (`/…/{id}/content?download=1`) |
 | `metadata` | object\|null | campi estensibili |
 
 > Scelta REST: filtri in **query string** (non body), `GET` idempotente e cacheable. Il MIME type
@@ -87,7 +88,7 @@ Request `multipart/form-data`:
 | `media_type` | sì | enum | `audio/m4a` \| `audio/mp3` \| `video/mp4` |
 | `duration_s` | no | integer | durata in secondi |
 
-Risposte: `201` → `SourceMediaItem` (con `stream_url`, `null` in dev locale); `400` campi mancanti /
+Risposte: `201` → `SourceMediaItem` (con `content_url`/`download_url`); `400` campi mancanti /
 `media_type` fuori enum; `409` media già presente (stesso `media_type`/`filename` → `object_key`
 duplicato); `401` senza chiave.
 
@@ -101,6 +102,35 @@ pre-signed: `SourceService.presigned_upload_url()` restituisce un URL PUT firmat
 (`None` con storage locale/dev). Attivazione futura come endpoint dedicato (`POST` che crea un
 record `processing` + URL, poi conferma).
 
+### `GET /v0/source/media/{id}`
+Metadati del **singolo** record (il listing è su `GET /v0/source/media`). Protetto (`X-API-Key`).
+`200` → `SourceMediaItem`; `404` se l'id non esiste. I **byte** sono sulla sotto-risorsa `/content`.
+
+> Scelta di design: `/{id}` = **metadati** (JSON, leggero, cache-abile); i byte sono una
+> sotto-risorsa esplicita. Un `GET /{id}` che restituisse i byte costringerebbe a scaricare il file
+> anche solo per leggere il titolo, e a inventare un altro path per i metadati.
+
+### `GET /v0/source/media/{id}/content`
+I **byte** del media. Protetto (`X-API-Key`). Stessi byte dallo stesso storage; cambia solo la
+`Content-Disposition`:
+- default → **inline** (per il player);
+- `?download=1|true|yes|on` → **allegato** (salva su disco).
+
+| Ambiente | Risposta |
+|----------|----------|
+| coll/prod (S3/MinIO) | **`302`** con `Location` → URL pre-firmato (disposition giusta); il client scarica/streamma **diretto dallo storage**, l'API resta fuori dal path dei byte |
+| dev (storage locale) | **`200`** in streaming dal FS (`flask.send_file`), con `Content-Disposition` inline/attachment e **supporto Range** (`206`, seekable/ripristinabile) |
+| id assente o byte mancanti | **`404`** (nessun corpo) |
+
+> `SourceService.content(id, download)` restituisce un `DownloadTarget` discriminato (`redirect_url`
+> per i backend remoti, `local_path` per il locale). `download=True` → `get_download_url`
+> (attachment); `False` → `get_stream_url` (inline). Il param `download` è gestito come **stringa
+> lenita** (`1|true|yes|on`) perché la coercion boolean di connexion accetta solo `true`/`false`.
+
+> **Inline vs attachment.** Stessi byte, stesso storage, **solo l'header `Content-Disposition`
+> cambia** — è una decisione del server, non negoziabile via `Accept` (per questo i byte stanno su
+> una sotto-risorsa, non sotto content negotiation di `/{id}`).
+
 ### Architettura (Clean Architecture)
 
 Obiettivo: poter scambiare lo storage dei dati e dei byte **senza toccare service né controller**.
@@ -110,26 +140,26 @@ controllers/source_controller.py     thin: query param → service → (envelope
         │  (assemblato da)
 factory.py  ── build_source_service() ── legge l'ambiente, sceglie repo + storage
         │
-services/source_service.py           orchestrazione: repo.find() → DTO + stream_url
+services/source_service.py           orchestrazione: repo.find() → DTO + content_url/download_url
         ├── repositories/            persistenza metadati
         │     ├── base.py            Protocol SourceMediaRepository (find, get, insert)
         │     ├── mock_repository.py statico, in-memory (dev/test)
         │     └── sqlite_repository.py  SQLite WAL (coll/prod e dev con DB)
         └── storage/                 byte dei media
-              ├── base.py            Protocol StorageBackend (get_stream_url, get_upload_url, put_object, object_exists)
+              ├── base.py            Protocol StorageBackend (get_stream_url, get_upload_url, get_download_url, put_object, local_path, object_exists)
               ├── local_backend.py   FS del container (dev): nessun URL firmato
               └── minio_backend.py   MinIO/S3 (coll/prod): URL pre-firmati
 ```
 
 Il `SourceService` riceve `object_key` dal repository (riferimento interno allo storage) e lo
-traduce in `stream_url` chiamando lo storage backend; `object_key` **non viene mai esposto**.
+espone come `content_url`/`download_url` (verso `/content`); `object_key` **non viene mai esposto**.
 
 ### Selezione del backend (factory)
 
 | Env var | Effetto |
 |---------|---------|
 | `SOURCE_DB_PATH` impostata | repository **SQLite** su quel file; altrimenti **Mock** in-memory |
-| `STORAGE_BACKEND=local` (default) | byte su FS (`SOURCE_MEDIA_DIR`); `stream_url=null` |
+| `STORAGE_BACKEND=local` (default) | byte su FS (`SOURCE_MEDIA_DIR`); i byte si servono via `/content` |
 | `STORAGE_BACKEND=minio` \| `s3` | `MinioStorageBackend` con `STORAGE_ENDPOINT`, `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY`, `STORAGE_BUCKET`, `STORAGE_SECURE` |
 
 Gli import dei backend concreti sono **lazy**: dev/test con backend `local` non caricano l'SDK
@@ -158,24 +188,24 @@ CREATE TABLE IF NOT EXISTS source_media (
 Scelta strategica: **object storage S3-compatible** (MinIO self-hosted in coll/prod, S3/R2
 opzione futura). Motivo legato al **play da browser**:
 
-- Con storage locale, ogni byte audio passerebbe per l'API (connexion→proxy→browser): collo di
-  bottiglia, niente Range request native.
-- Con object storage, l'API restituisce nel JSON uno **`stream_url` pre-firmato** (scade 1h) e il
-  browser scarica i byte **direttamente** dallo storage, con **Range request native** (seek/resume
-  dell'audio). L'API resta fuori dal path dei byte.
+- Con storage locale, ogni byte audio passa per l'API (connexion→proxy→browser): collo di
+  bottiglia. Accettabile in dev.
+- Con object storage, l'endpoint `/content` risponde **`302`** verso un URL pre-firmato e il browser
+  scarica/streamma i byte **direttamente** dallo storage, con **Range native** (seek/resume). L'API
+  resta fuori dal path dei byte.
 
 ```
-Browser ─ GET /v0/source/media ─► API (SQLite + genera stream_url)
-Browser ─ GET stream_url ───────► MinIO/S3 (Range, seek)   ← l'API non è coinvolta
+Browser ─ GET /v0/source/media/{id}/content ─► API (302 → URL pre-firmato)
+Browser ─ GET <url pre-firmato> ─────────────► MinIO/S3 (Range, seek)   ← l'API non è coinvolta
 ```
 
-In **dev** gestiamo solo l'upload locale (`STORAGE_BACKEND=local`): `stream_url=null`, lo streaming
-da browser si abilita in coll/prod. Runbook MinIO: [`deploy/storage/README.md`](../deploy/storage/README.md).
+In **dev** lo storage è locale: `/content` streamma dal FS (l'API è nel path dei byte). Il redirect
+si abilita in coll/prod. Runbook MinIO: [`deploy/storage/README.md`](../deploy/storage/README.md).
 
 ### Verifica end-to-end (seed)
 
-`make seed-source` (idempotente) inserisce record demo e carica placeholder sullo storage, così gli
-`stream_url` risolvono. Utile per validare la catena dopo un deploy. Internamente:
+`make seed-source` (idempotente) inserisce record demo e carica placeholder sullo storage, così i
+media sono scaricabili via `/content`. Utile per validare la catena dopo un deploy. Internamente:
 `docker compose -f docker-compose.source.yml exec source python -m src.domains.source.seed`.
 
 ### Implementazioni attuali vs future
@@ -183,10 +213,13 @@ da browser si abilita in coll/prod. Runbook MinIO: [`deploy/storage/README.md`](
 | Aspetto | Oggi | Futuro |
 |---------|------|--------|
 | Listing `GET /v0/source/media` | ✅ SQLite + paginazione + filtri | — |
+| Singolo record `GET /v0/source/media/{id}` | ✅ metadati | — |
 | Storage byte | ✅ local (dev), MinIO (coll/prod) | S3/R2 (solo cambio env) |
-| `stream_url` | ✅ pre-firmato (MinIO/S3), null in local | — |
+| `content_url`/`download_url` | ✅ link verso `/content` (inline/attachment) | — |
 | Upload server-side | ✅ `POST /v0/source/media` (multipart) | — |
 | Upload pre-signed (browser→storage) | predisposto (`presigned_upload_url` + `get_upload_url`) | endpoint dedicato in coll/prod |
+| Byte `GET /v0/source/media/{id}/content` | ✅ inline/`?download=1`, 302 in coll/prod, streaming+Range in dev | — |
+| Dominio `media` come BFF pubblico | — | esporre `media`, tenere `source` interno; download via redirect (relay solo in dev) |
 | `SqliteSourceMediaRepository` `insert`/`get` | ✅ (usati da upload e seed) | — |
 
 ---

@@ -19,6 +19,15 @@ def test_local_no_presigned_urls(tmp_path):
     backend = LocalStorageBackend(media_dir=str(tmp_path))
     assert backend.get_stream_url("k") is None
     assert backend.get_upload_url("k") is None
+    assert backend.get_download_url("k", filename="f.m4a") is None
+
+
+def test_local_path_existing_and_missing(tmp_path):
+    backend = LocalStorageBackend(media_dir=str(tmp_path))
+    assert backend.local_path("a/b.m4a") is None          # non esiste
+    backend.put_object("a/b.m4a", b"x", "audio/m4a")
+    p = backend.local_path("a/b.m4a")
+    assert p is not None and p.endswith("a/b.m4a")
 
 
 def _factory(monkeypatch, **env):

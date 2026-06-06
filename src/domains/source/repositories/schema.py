@@ -3,7 +3,7 @@
 Unica fonte di verita' a runtime: SqliteSourceMediaRepository esegue questo DDL
 all'avvio (idempotente, IF NOT EXISTS). object_key e' il riferimento interno allo
 storage (FS locale in dev, oggetto MinIO/S3 in coll/prod); NON viene esposto
-dall'API, che restituisce invece uno stream_url pre-firmato.
+dall'API, che restituisce invece i link content_url/download_url verso /content.
 """
 
 SCHEMA_SQL = """

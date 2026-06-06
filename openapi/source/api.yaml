@@ -90,7 +90,8 @@ paths:
                     duration_s: 3012
                     created_at_s: 1700000000
                     status: "ready"
-                    stream_url: "https://storage.example/media-source/audio/m4a/2024-01-puntata-pilota.m4a?X-Amz-Signature=..."
+                    content_url: "/v0/source/media/1/content"
+                    download_url: "/v0/source/media/1/content?download=1"
                     metadata: {}
                 pagination:
                   page: 1
@@ -140,7 +141,7 @@ paths:
                   description: Durata in secondi (opzionale)
       responses:
         '201':
-          description: Media creato; restituisce il record con stream_url (null in dev locale)
+          description: Media creato; restituisce il record (con content_url/download_url)
           content:
             application/json:
               schema:
@@ -158,6 +159,85 @@ paths:
               schema:
                 $ref: '../shared/components.yaml#/components/schemas/Error'
 
+  /source/media/{id}:
+    get:
+      operationId: get_source_media
+      tags: [source]
+      summary: Recupera il singolo record (metadati) di un media
+      description: |
+        Restituisce i **metadati** del media (il listing e' su `GET /source/media`).
+        I **byte** sono sulla sotto-risorsa `GET /source/media/{id}/content`.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID del media
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Metadati del media
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceMediaItem'
+        '404':
+          description: Media non trovato (nessun corpo)
+
+  /source/media/{id}/content:
+    get:
+      operationId: get_source_media_content
+      tags: [source]
+      summary: Byte del media (play inline o download)
+      description: |
+        Restituisce i byte del media. Stessi byte dallo stesso storage; cambia solo la
+        Content-Disposition:
+        - default: **inline** (per il player);
+        - `?download=1|true|yes|on`: **allegato** (salva su disco).
+
+        Per ambiente:
+        - coll/prod (S3/MinIO): `302` con `Location` verso un URL pre-firmato → il client
+          scarica/streamma direttamente dallo storage (l'API resta fuori dal path dei byte).
+        - dev (storage locale): l'API streamma i byte dal file system, con supporto Range.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID del media
+          schema:
+            type: integer
+            example: 1
+        - name: download
+          in: query
+          required: false
+          description: Se valorizzato (1|true|yes|on), forza il download come allegato.
+          schema:
+            type: string
+            example: "1"
+      responses:
+        '200':
+          description: Byte del file (storage locale / dev)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '302':
+          description: Redirect verso URL pre-firmato (coll/prod)
+          headers:
+            Location:
+              description: URL pre-firmato (scade)
+              schema:
+                type: string
+                format: uri
+        '404':
+          description: Media non trovato (nessun corpo)
+
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -166,7 +246,7 @@ components:
   schemas:
     SourceMediaItem:
       type: object
-      required: [id, title, filename, media_type, created_at_s, status]
+      required: [id, title, filename, media_type, created_at_s, status, content_url, download_url]
       properties:
         id:
           type: integer
@@ -203,15 +283,16 @@ components:
           enum: [ready, processing, error]
           description: Stato del contenuto nel ciclo di vita
           example: "ready"
-        stream_url:
+        content_url:
           type: string
-          format: uri
-          nullable: true
           description: >
-            URL pre-firmato per lo streaming diretto dal browser (scade in 1h, supporta
-            Range request per seek/resume). Null quando lo storage e' locale (dev) e non
-            espone URL firmati.
-          example: "https://storage.example/media-source/audio/m4a/file.m4a?X-Amz-Signature=..."
+            URL (relativo) per ottenere i byte inline, per il player. L'endpoint redirige
+            allo storage in coll/prod o streamma dal FS in dev.
+          example: "/v0/source/media/1/content"
+        download_url:
+          type: string
+          description: URL (relativo) per scaricare il file come allegato.
+          example: "/v0/source/media/1/content?download=1"
         metadata:
           type: object
           nullable: true
