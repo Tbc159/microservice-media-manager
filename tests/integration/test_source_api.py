@@ -12,15 +12,22 @@ warnings.filterwarnings("ignore")
 
 
 @pytest.fixture()
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
     # Determinismo: nessuna API_KEY attesa -> qualunque chiave non vuota e' accettata;
     # backend mock+local (niente DB/MinIO) a prescindere dall'ambiente del runner.
     monkeypatch.delenv("API_KEY", raising=False)
     monkeypatch.delenv("SOURCE_DB_PATH", raising=False)
     monkeypatch.delenv("STORAGE_BACKEND", raising=False)
+    monkeypatch.setenv("SOURCE_MEDIA_DIR", str(tmp_path))  # upload locale su dir temporanea
     from src.app import create_app
 
-    return create_app(domains=["source"]).test_client()
+    app = create_app(domains=["source"])
+    # Stato isolato per test: repository mock fresco (il controller usa un singleton di modulo).
+    import src.domains.source.controllers.source_controller as sc
+    from src.domains.source.factory import build_source_service
+
+    sc._service = build_source_service()
+    return app.test_client()
 
 
 _KEY = {"X-API-Key": "test"}
@@ -73,3 +80,58 @@ def test_invalid_type_rejected(client):
     # type fuori enum -> 400 da strict_validation
     r = client.get("/v0/source/media?type=application/pdf", headers=_KEY)
     assert r.status_code == 400
+
+
+# --- POST /v0/source/media (upload server-side multipart) ---
+
+
+def _upload(client, *, filename="nuova.m4a", content=b"AUDIO", title="Nuova",
+            media_type="audio/m4a", extra=None, headers=_KEY):
+    data = {"title": title, "media_type": media_type}
+    if extra:
+        data.update(extra)
+    return client.post(
+        "/v0/source/media",
+        files={"file": (filename, content, media_type)},
+        data=data,
+        headers=headers or {},
+    )
+
+
+def test_upload_returns_201_with_record(client):
+    r = _upload(client, content=b"AUDIO", title="Nuova", extra={"duration_s": "55"})
+    assert r.status_code == 201
+    b = r.json()
+    assert b["title"] == "Nuova"
+    assert b["filename"] == "nuova.m4a"
+    assert b["size_bytes"] == 5
+    assert b["duration_s"] == 55
+    assert b["status"] == "ready"
+    assert b["stream_url"] is None        # storage locale
+    assert "object_key" not in b
+
+
+def test_upload_then_appears_in_listing(client):
+    _upload(client, filename="extra.m4a", title="Extra")
+    r = client.get("/v0/source/media?type=audio/m4a", headers=_KEY)
+    assert r.json()["pagination"]["total"] == 3  # 2 seed + 1 caricato
+
+
+def test_upload_duplicate_returns_409(client):
+    assert _upload(client, filename="dup.m4a").status_code == 201
+    assert _upload(client, filename="dup.m4a", title="Altro").status_code == 409
+
+
+def test_upload_missing_title_rejected(client):
+    r = client.post(
+        "/v0/source/media",
+        files={"file": ("x.m4a", b"x", "audio/m4a")},
+        data={"media_type": "audio/m4a"},
+        headers=_KEY,
+    )
+    assert r.status_code == 400
+
+
+def test_upload_requires_api_key(client):
+    r = _upload(client, headers=None)
+    assert r.status_code == 401

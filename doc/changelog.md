@@ -81,6 +81,18 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
   [repository-governance.md](repository-governance.md).
 - **Documentazione**: riallineamento README ad alto livello + cartella `doc/` (questo insieme).
 
+## 8. Upload `POST /v0/source/media` + allineamento gestione (2026-06-06)
+
+- **Upload server-side multipart**: `POST /v0/source/media` riceve file + metadati, salva i byte
+  nello storage e inserisce il record in SQLite (`201`). Duplicati (`object_key`) → `409` via
+  `DuplicateObjectKeyError` (astrae `sqlite3.IntegrityError`). Aggiunti `repository.get(id)` e la
+  `SourceService.create()`.
+- **Pre-signed predisposto** (coll/prod): `SourceService.presigned_upload_url()` su `get_upload_url`
+  dello storage (`None` in locale). Endpoint dedicato come step futuro.
+- **README di develop** reso domain-agnostic (il commit `505af1a` rimasto fuori dal merge #4) e
+  allineamento della **gestione** su `coll`/`main` (PR dedicate: solo doc indipendenti dal codice).
+- Test saliti a **43** (unit create/duplicate/get/presigned + integration upload).
+
 ## Stato runtime attuale (staging)
 
 | Componente | Stato |
@@ -95,8 +107,8 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione
   `develop → coll`.
-- Implementare `POST /v0/source/media` (upload) sfruttando `put_object`/`get_upload_url` già
-  predisposti.
+- Attivare il flusso **pre-signed** come endpoint dedicato in coll/prod (building block già pronti:
+  `presigned_upload_url` + `get_upload_url`).
 - Governance: deciso *solo documentazione* per ora (nessuna modifica alla branch protection);
   percorso pianificato = **validatore esterno** (account indipendente, vedi
   [repository-governance.md](repository-governance.md)).

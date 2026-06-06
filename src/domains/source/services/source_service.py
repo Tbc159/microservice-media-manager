@@ -45,3 +45,44 @@ class SourceService:
                 "total_pages": total_pages,
             },
         }
+
+    @staticmethod
+    def _object_key(media_type: str, filename: str) -> str:
+        # es. audio/m4a/<filename> — namespacing per MIME type
+        return f"{media_type}/{filename}"
+
+    def create(
+        self,
+        *,
+        title: str,
+        media_type: str,
+        filename: str,
+        data: bytes,
+        duration_s: Optional[int] = None,
+    ) -> dict:
+        """Upload server-side: prima il metadato (rileva i duplicati senza scrivere
+        byte orfani), poi i byte nello storage. Restituisce il record creato."""
+        object_key = self._object_key(media_type, filename)
+        new_id = self._repo.insert(
+            title=title,
+            filename=filename,
+            media_type=media_type,
+            object_key=object_key,
+            size_bytes=len(data),
+            duration_s=duration_s,
+        )
+        self._storage.put_object(object_key, data, media_type)
+        return self._to_dto(self._repo.get(new_id))
+
+    def presigned_upload_url(
+        self,
+        *,
+        media_type: str,
+        filename: str,
+        ttl_seconds: int = _STREAM_URL_TTL_S,
+    ) -> Optional[str]:
+        """Predisposizione del flusso pre-signed (coll/prod): URL PUT per upload
+        diretto browser -> storage. None con storage locale (dev): in quel caso si
+        usa l'upload server-side (create)."""
+        object_key = self._object_key(media_type, filename)
+        return self._storage.get_upload_url(object_key, ttl_seconds=ttl_seconds)

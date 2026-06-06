@@ -103,6 +103,60 @@ paths:
             application/json:
               schema:
                 $ref: '../shared/components.yaml#/components/schemas/Error'
+    post:
+      operationId: upload_source_media
+      tags: [source]
+      summary: Carica un nuovo media (upload server-side, multipart)
+      description: |
+        Upload server-side: l'API riceve il file, ne salva i byte nello storage
+        (FS in dev, MinIO/S3 in coll/prod) e inserisce i metadati nel DB SQLite.
+        Risponde con il record creato. In coll/prod e' previsto anche il flusso
+        pre-signed (browser -> storage diretto); vedi doc/domains-and-api.md.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, title, media_type]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Contenuto del media da caricare
+                title:
+                  type: string
+                  description: Titolo del contenuto
+                  example: "Nuova puntata"
+                media_type:
+                  type: string
+                  enum: [audio/m4a, audio/mp3, video/mp4]
+                  example: audio/m4a
+                duration_s:
+                  type: integer
+                  nullable: true
+                  description: Durata in secondi (opzionale)
+      responses:
+        '201':
+          description: Media creato; restituisce il record con stream_url (null in dev locale)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceMediaItem'
+        '400':
+          description: Richiesta non valida (campi mancanti o media_type fuori enum)
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+        '409':
+          description: Esiste gia' un media con lo stesso nome/oggetto
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
 
 components:
   securitySchemes:

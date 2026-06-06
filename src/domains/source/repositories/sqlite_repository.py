@@ -10,6 +10,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
+from .base import DuplicateObjectKeyError
 from .schema import SCHEMA_SQL
 
 _SELECT_COLS = (
@@ -70,6 +71,13 @@ class SqliteSourceMediaRepository:
 
         return [self._row_to_record(r) for r in rows], total
 
+    def get(self, media_id: int) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT {_SELECT_COLS} FROM source_media WHERE id = ?", (media_id,)
+            ).fetchone()
+        return self._row_to_record(row) if row else None
+
     def insert(
         self,
         *,
@@ -83,21 +91,24 @@ class SqliteSourceMediaRepository:
         metadata: Optional[dict] = None,
     ) -> int:
         with self._connect() as conn:
-            cur = conn.execute(
-                "INSERT INTO source_media "
-                "(title, filename, media_type, object_key, size_bytes, "
-                " duration_s, status, metadata) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    title,
-                    filename,
-                    media_type,
-                    object_key,
-                    size_bytes,
-                    duration_s,
-                    status,
-                    json.dumps(metadata) if metadata else None,
-                ),
-            )
+            try:
+                cur = conn.execute(
+                    "INSERT INTO source_media "
+                    "(title, filename, media_type, object_key, size_bytes, "
+                    " duration_s, status, metadata) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        title,
+                        filename,
+                        media_type,
+                        object_key,
+                        size_bytes,
+                        duration_s,
+                        status,
+                        json.dumps(metadata) if metadata else None,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateObjectKeyError(object_key) from exc
             conn.commit()
             return int(cur.lastrowid)
