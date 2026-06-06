@@ -6,6 +6,8 @@ non distingue i due. I dati sono per-istanza, cosi' insert() non sporca altri te
 import copy
 from typing import Optional
 
+from .base import DuplicateObjectKeyError
+
 _SEED: list[dict] = [
     {
         "id": 1,
@@ -64,6 +66,12 @@ class MockSourceMediaRepository:
         start = (page - 1) * page_size
         return copy.deepcopy(results[start : start + page_size]), total
 
+    def get(self, media_id: int) -> Optional[dict]:
+        for r in self._data:
+            if r["id"] == media_id:
+                return copy.deepcopy(r)
+        return None
+
     def insert(
         self,
         *,
@@ -76,6 +84,8 @@ class MockSourceMediaRepository:
         status: str = "ready",
         metadata: Optional[dict] = None,
     ) -> int:
+        if any(r["object_key"] == object_key for r in self._data):
+            raise DuplicateObjectKeyError(object_key)
         new_id = max((r["id"] for r in self._data), default=0) + 1
         self._data.append(
             {

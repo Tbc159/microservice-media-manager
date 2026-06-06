@@ -1,6 +1,14 @@
 from typing import Optional, Protocol
 
 
+class DuplicateObjectKeyError(Exception):
+    """Sollevata da insert() quando l'object_key esiste gia' (vincolo di unicita').
+
+    Astrae il conflitto di persistenza: il controller la traduce in 409 senza
+    dipendere dal backend concreto (sqlite3.IntegrityError o check in-memory).
+    """
+
+
 class SourceMediaRepository(Protocol):
     """Astrazione di persistenza dei metadati media.
 
@@ -18,6 +26,10 @@ class SourceMediaRepository(Protocol):
         page_size: int,
     ) -> tuple[list[dict], int]:
         """Restituisce (items, total_count) filtrando per media_type ed eventuale title."""
+        ...
+
+    def get(self, media_id: int) -> Optional[dict]:
+        """Restituisce il record con quell'id, o None se assente."""
         ...
 
     def insert(

@@ -1,4 +1,7 @@
+import pytest
+
 from src.domains.source.controllers.health_controller import get_health
+from src.domains.source.repositories.base import DuplicateObjectKeyError
 from src.domains.source.repositories.mock_repository import MockSourceMediaRepository
 from src.domains.source.services.source_service import SourceService
 from src.domains.source.storage.local_backend import LocalStorageBackend
@@ -6,6 +9,13 @@ from src.domains.source.storage.local_backend import LocalStorageBackend
 
 def _svc() -> SourceService:
     return SourceService(repo=MockSourceMediaRepository(), storage=LocalStorageBackend())
+
+
+def _svc_fs(tmp_path) -> SourceService:
+    # storage locale su dir temporanea: create() scrive davvero i byte
+    return SourceService(
+        repo=MockSourceMediaRepository(), storage=LocalStorageBackend(media_dir=str(tmp_path))
+    )
 
 
 def test_health_returns_ok():
@@ -86,3 +96,39 @@ def test_stream_url_present_null_with_local_backend():
     for item in result["items"]:
         assert "stream_url" in item
         assert item["stream_url"] is None
+
+
+def test_create_inserts_metadata_and_writes_bytes(tmp_path):
+    svc = _svc_fs(tmp_path)
+    item = svc.create(
+        title="Nuova", media_type="audio/m4a", filename="x.m4a", data=b"abc", duration_s=10
+    )
+    assert item["title"] == "Nuova"
+    assert item["filename"] == "x.m4a"
+    assert item["size_bytes"] == 3
+    assert item["duration_s"] == 10
+    assert item["status"] == "ready"
+    assert item["stream_url"] is None        # storage locale
+    assert "object_key" not in item          # interno, mai esposto
+    assert (tmp_path / "audio/m4a/x.m4a").read_bytes() == b"abc"
+
+
+def test_create_then_listed(tmp_path):
+    svc = _svc_fs(tmp_path)
+    svc.create(title="N", media_type="audio/m4a", filename="nuovo.m4a", data=b"z")
+    result = svc.query(media_type="audio/m4a")
+    titles = [i["title"] for i in result["items"]]
+    assert "N" in titles
+
+
+def test_create_duplicate_raises(tmp_path):
+    svc = _svc_fs(tmp_path)
+    svc.create(title="A", media_type="audio/m4a", filename="dup.m4a", data=b"1")
+    with pytest.raises(DuplicateObjectKeyError):
+        svc.create(title="B", media_type="audio/m4a", filename="dup.m4a", data=b"2")
+
+
+def test_presigned_upload_url_none_on_local(tmp_path):
+    # Predisposizione pre-signed: con storage locale (dev) non c'e' URL firmato.
+    svc = _svc_fs(tmp_path)
+    assert svc.presigned_upload_url(media_type="audio/m4a", filename="x.m4a") is None

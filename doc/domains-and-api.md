@@ -74,6 +74,33 @@ Risposta `200`: `SourceMediaPagedResponse` = `{ items: SourceMediaItem[], pagina
 > è un filtro di dati → query param `type`, non header `Content-Type` (riservato al body). La
 > risposta è sempre un envelope (mai schema biforcato all/single).
 
+### `POST /v0/source/media`
+Carica un nuovo media. Protetto (`X-API-Key`). **Upload server-side multipart**: l'API riceve il
+file, ne salva i byte nello storage e inserisce i metadati nel DB; risponde `201` col record creato.
+
+Request `multipart/form-data`:
+
+| Campo | Obblig. | Tipo | Note |
+|-------|---------|------|------|
+| `file` | sì | binary | contenuto del media (il nome file diventa parte dell'`object_key`) |
+| `title` | sì | string | titolo |
+| `media_type` | sì | enum | `audio/m4a` \| `audio/mp3` \| `video/mp4` |
+| `duration_s` | no | integer | durata in secondi |
+
+Risposte: `201` → `SourceMediaItem` (con `stream_url`, `null` in dev locale); `400` campi mancanti /
+`media_type` fuori enum; `409` media già presente (stesso `media_type`/`filename` → `object_key`
+duplicato); `401` senza chiave.
+
+> connexion passa i campi non-file in `body` (dict) e il file come `FileStorage`
+> (`.filename`, `.read()`). Il service inserisce **prima** il metadato (così un duplicato è
+> rilevato senza scrivere byte orfani), **poi** i byte.
+
+**Flusso pre-signed (predisposto, coll/prod).** L'upload server-side funziona ovunque (i byte vanno
+su MinIO/S3 in coll/prod). In più, per non far transitare i byte dall'API, è predisposto il flusso
+pre-signed: `SourceService.presigned_upload_url()` restituisce un URL PUT firmato dallo storage
+(`None` con storage locale/dev). Attivazione futura come endpoint dedicato (`POST` che crea un
+record `processing` + URL, poi conferma).
+
 ### Architettura (Clean Architecture)
 
 Obiettivo: poter scambiare lo storage dei dati e dei byte **senza toccare service né controller**.
@@ -85,7 +112,7 @@ factory.py  ── build_source_service() ── legge l'ambiente, sceglie repo 
         │
 services/source_service.py           orchestrazione: repo.find() → DTO + stream_url
         ├── repositories/            persistenza metadati
-        │     ├── base.py            Protocol SourceMediaRepository (find, insert)
+        │     ├── base.py            Protocol SourceMediaRepository (find, get, insert)
         │     ├── mock_repository.py statico, in-memory (dev/test)
         │     └── sqlite_repository.py  SQLite WAL (coll/prod e dev con DB)
         └── storage/                 byte dei media
@@ -158,8 +185,9 @@ da browser si abilita in coll/prod. Runbook MinIO: [`deploy/storage/README.md`](
 | Listing `GET /v0/source/media` | ✅ SQLite + paginazione + filtri | — |
 | Storage byte | ✅ local (dev), MinIO (coll/prod) | S3/R2 (solo cambio env) |
 | `stream_url` | ✅ pre-firmato (MinIO/S3), null in local | — |
-| Upload | predisposto (`put_object`, `get_upload_url`) | `POST /v0/source/media` + `/{id}/confirm` |
-| `SqliteSourceMediaRepository.insert` | ✅ (usato da seed) | riuso per POST |
+| Upload server-side | ✅ `POST /v0/source/media` (multipart) | — |
+| Upload pre-signed (browser→storage) | predisposto (`presigned_upload_url` + `get_upload_url`) | endpoint dedicato in coll/prod |
+| `SqliteSourceMediaRepository` `insert`/`get` | ✅ (usati da upload e seed) | — |
 
 ---
 

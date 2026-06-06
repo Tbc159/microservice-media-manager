@@ -63,13 +63,24 @@ def test_pagination_offset(tmp_path):
     assert {i["id"] for i in page1}.isdisjoint({i["id"] for i in page2})
 
 
-def test_unique_object_key_constraint(tmp_path):
-    import sqlite3
+def test_unique_object_key_raises_domain_error(tmp_path):
+    import pytest
+
+    from src.domains.source.repositories.base import DuplicateObjectKeyError
 
     repo = _repo(tmp_path)
     repo.insert(title="A", filename="a.m4a", media_type="audio/m4a", object_key="dup")
-    try:
+    with pytest.raises(DuplicateObjectKeyError):
         repo.insert(title="B", filename="b.m4a", media_type="audio/m4a", object_key="dup")
-        assert False, "atteso IntegrityError su object_key duplicato"
-    except sqlite3.IntegrityError:
-        pass
+
+
+def test_get_by_id(tmp_path):
+    repo = _repo(tmp_path)
+    rid = repo.insert(
+        title="G", filename="g.m4a", media_type="audio/m4a", object_key="k/g", metadata={"a": 1}
+    )
+    rec = repo.get(rid)
+    assert rec["id"] == rid
+    assert rec["title"] == "G"
+    assert rec["metadata"] == {"a": 1}
+    assert repo.get(99999) is None
