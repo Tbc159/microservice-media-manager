@@ -1,14 +1,15 @@
 openapi: 3.0.3
 info:
   title: Media API
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    API del dominio "media": gestione dei file media auto-scaricati.
-    base_path /v0 e' applicato da src/app.py; i path qui sotto sono relativi
-    a quel prefisso. URL effettivi: /v0/media, /v0/media/health.
+    Dominio "media": **BFF pubblico** verso il dominio interno "source". Il FrontEnd parla
+    solo con /v0/media; media orchestra source sulla rete interna e ri-mappa gli URL dei byte
+    su /v0/media. base_path /v0 e' applicato da src/app.py.
 servers:
   - url: /v0
-    description: Development server (base path applicato da connexion)
+    description: base path applicato da connexion
+
 paths:
   /media/health:
     get:
@@ -21,103 +22,223 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Health'
+                $ref: '../shared/components.yaml#/components/schemas/Health'
               example:
                 status: ok
+
   /media:
     get:
       operationId: list_media
       tags: [media]
-      summary: Lista tutti i file media
-      description: Recupera la lista di tutti i file media auto-scaricati.
+      summary: Lista i media (delega a source)
+      description: Envelope paginato; filtro per `type` ed eventuale `title`.
       security:
         - ApiKeyAuth: []
+      parameters:
+        - name: type
+          in: query
+          required: true
+          description: MIME type dei contenuti
+          schema:
+            type: string
+            enum: [audio/m4a, audio/mp3, video/mp4]
+            example: audio/m4a
+        - name: title
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
       responses:
         '200':
-          description: Operazione eseguita con successo.
+          description: Risultati paginati
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/MediaItem'
-              example:
-                - id: 2
-                  name: "data_NomeFile.m4a"
-                  creation_date_s: 1779873651
-                  download_link: "http://host/download/data_NomeFile.m4a"
-                  status: "draft"
-                  pubblicazione:
-                    titolo: null
-                    description: null
-                    cover_image: null
-                    publishing_date_s: null
-                - id: 1
-                  name: "data_AltroFile.m4a"
-                  creation_date_s: 1779873600
-                  download_link: "http://host/download/data_AltroFile.m4a"
-                  status: "published"
-                  pubblicazione:
-                    titolo: "Titolo puntata"
-                    description: "Descrizione puntata"
-                    cover_image: "http://host/covers/data_AltroFile.jpg"
-                    publishing_date_s: 1879873651
-                - id: 0
-                  name: "data_PrimoFile.m4a"
-                  creation_date_s: 1779873500
-                  download_link: "http://host/download/data_PrimoFile.m4a"
-                  status: "processing"
-                  pubblicazione:
-                    titolo: null
-                    description: null
-                    cover_image: null
-                    publishing_date_s: null
+                $ref: '#/components/schemas/MediaPagedResponse'
+        '400':
+          description: Parametro `type` mancante o non valido
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+    post:
+      operationId: upload_media
+      tags: [media]
+      summary: Carica un nuovo media (delega l'upload a source)
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, title, media_type]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                title:
+                  type: string
+                media_type:
+                  type: string
+                  enum: [audio/m4a, audio/mp3, video/mp4]
+                duration_s:
+                  type: integer
+                  nullable: true
+      responses:
+        '201':
+          description: Media creato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaItem'
+        '400':
+          description: Richiesta non valida
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+        '409':
+          description: Media gia' presente
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+
+  /media/{id}:
+    get:
+      operationId: get_media
+      tags: [media]
+      summary: Metadati del singolo media
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Metadati del media
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaItem'
+        '404':
+          description: Media non trovato (nessun corpo)
+
+  /media/{id}/content:
+    get:
+      operationId: get_media_content
+      tags: [media]
+      summary: Byte del media (play inline o download)
+      description: |
+        Default inline; `?download=1|true|yes|on` -> allegato. media propaga il `302` di
+        source verso lo storage in coll/prod (resta fuori dai byte); in dev relaia i byte.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            example: 1
+        - name: download
+          in: query
+          required: false
+          description: Se valorizzato (1|true|yes|on), forza il download come allegato.
+          schema:
+            type: string
+            example: "1"
+      responses:
+        '200':
+          description: Byte del file (relay da source in dev)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '302':
+          description: Redirect verso URL pre-firmato (coll/prod)
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '404':
+          description: Media non trovato (nessun corpo)
+
 components:
   securitySchemes:
     ApiKeyAuth:
       $ref: '../shared/components.yaml#/components/securitySchemes/ApiKeyAuth'
   schemas:
-    Health:
-      $ref: '../shared/components.yaml#/components/schemas/Health'
     MediaItem:
       type: object
-      required: [id, name]
+      required: [id, title, filename, media_type, created_at_s, status, content_url, download_url]
       properties:
         id:
           type: integer
-          example: 2
-        name:
+          example: 1
+        title:
           type: string
-          example: "data_NomeFile.m4a"
-        creation_date_s:
+          example: "Puntata pilota"
+        filename:
+          type: string
+          example: "2024-01-puntata-pilota.m4a"
+        media_type:
+          type: string
+          example: "audio/m4a"
+        size_bytes:
           type: integer
-          description: Timestamp Unix in secondi.
-          example: 1779873651
-        download_link:
-          type: string
-          format: uri
-          example: "http://host/download/data_NomeFile.m4a"
+          nullable: true
+        duration_s:
+          type: integer
+          nullable: true
+        created_at_s:
+          type: integer
+          example: 1700000000
         status:
           type: string
-          enum: [draft, processing, published]
-        pubblicazione:
+          enum: [ready, processing, error]
+        content_url:
+          type: string
+          description: URL (relativo) dei byte inline, per il player.
+          example: "/v0/media/1/content"
+        download_url:
+          type: string
+          description: URL (relativo) dei byte come allegato.
+          example: "/v0/media/1/content?download=1"
+        metadata:
           type: object
           nullable: true
-          properties:
-            titolo:
-              type: string
-              nullable: true
-              description: Titolo della puntata.
-            description:
-              type: string
-              nullable: true
-              description: Descrizione della puntata.
-            cover_image:
-              type: string
-              nullable: true
-              description: URL immagine, stato autogenerazione o upload.
-            publishing_date_s:
-              type: integer
-              nullable: true
-              description: Timestamp Unix di pubblicazione in secondi.
-              example: 1879873651
+          additionalProperties: true
+    MediaPagedResponse:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MediaItem'
+        pagination:
+          $ref: '../shared/components.yaml#/components/schemas/PaginationMeta'

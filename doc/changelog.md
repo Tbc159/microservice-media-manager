@@ -113,13 +113,26 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
   [domains-and-api.md](domains-and-api.md).
 - Test a **55** (unit get_item/content + integration metadati + content inline/attachment/Range/404).
 
-## Stato runtime attuale (staging)
+## 10. `media` come BFF pubblico, `source` interno (2026-06-06)
 
-| Componente | Stato |
+- **`media` diventa il BFF pubblico**: endpoint specchio di source su `/v0/media` (`list`, `{id}`,
+  `{id}/content[?download]`, `POST` upload). `MediaService` delega via **`SourceGateway`** (httpx,
+  rete docker, niente SDK generato) e **ri-mappa** gli URL `/v0/source/…` → `/v0/media/…`.
+- **Download — nodo media→source**: media chiama source con `follow_redirects=False`; in coll/prod
+  **propaga il `302`** (resta fuori dai byte), in dev **relaia** i byte (limite di dev accettato).
+- **`source` diventa interno**: marker `openapi/source/.internal`; `gen-nginx-conf.sh` **non**
+  instrada i domini interni (solo rete docker). Smoke della CI aggiornato: health interna via
+  `docker exec`, e verifica del listing attraverso il BFF (`/v0/media`).
+- Config `SOURCE_INTERNAL_URL` (`config/media/<env>.env`); `MediaItem` rispecchia `SourceMediaItem`.
+- Test a **68** (unit BFF remap/relay/passthrough + integration media via gateway fittizio).
+- > Nota: il proxy **esterno** (duckdns, manuale) va puntato solo su `/v0/media`; `/v0/source` non
+  è più esposto pubblicamente.
+
+| Componente | Stato (target dopo merge di questa linea) |
 |------------|-------|
-| `media` container | attivo, `GET /v0/media` (statico) |
-| `source` container | attivo, `GET /v0/source/media` (SQLite + storage local) |
-| `mediamgr-proxy` | attivo, rotte `/v0/media/`, `/v0/source/` |
+| `media` container | **BFF pubblico**: list/`{id}`/`{id}/content`/upload, delega a source |
+| `source` container | **interno** (`.internal`): SQLite + storage; non instradato dal proxy pubblico |
+| `mediamgr-proxy` | instrada solo i domini **pubblici** (`/v0/media/`) |
 | MinIO | non in staging (solo coll/prod) |
 | `coll` / `main` | indietro rispetto a develop (vedi [branching-strategy.md](branching-strategy.md)) |
 

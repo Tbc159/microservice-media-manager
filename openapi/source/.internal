@@ -1,0 +1,2 @@
+Dominio interno: non instradato dal reverse-proxy pubblico.
+Raggiungibile solo sulla rete docker mediamgr (service-to-service, via il BFF media).

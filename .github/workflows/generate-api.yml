@@ -152,19 +152,29 @@ jobs:
 
       - name: Smoke / health check
         run: |
-          url="http://localhost:${PROXY_HTTP_PORT}/v0/${{ matrix.domain }}/health"
+          dom="${{ matrix.domain }}"
           ok=""
-          for i in $(seq 1 10); do
-            if curl -fsS "$url"; then echo; echo "OK: $url"; ok=1; break; fi
-            echo "tentativo $i fallito, riprovo tra 3s..."; sleep 3
-          done
-          [ -n "$ok" ] || { echo "::error::health check fallito su $url"; exit 1; }
+          if [ -f "openapi/$dom/.internal" ]; then
+            # Dominio interno: non instradato dal proxy -> verifica sulla rete docker.
+            for i in $(seq 1 10); do
+              if docker exec "$dom" python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/v0/'+'$dom'+'/health').status==200 else 1)" 2>/dev/null; then
+                echo "OK (interno): $dom/health"; ok=1; break; fi
+              echo "tentativo $i fallito, riprovo tra 3s..."; sleep 3
+            done
+          else
+            url="http://localhost:${PROXY_HTTP_PORT}/v0/$dom/health"
+            for i in $(seq 1 10); do
+              if curl -fsS "$url"; then echo; echo "OK: $url"; ok=1; break; fi
+              echo "tentativo $i fallito, riprovo tra 3s..."; sleep 3
+            done
+          fi
+          [ -n "$ok" ] || { echo "::error::health check fallito ($dom)"; exit 1; }
 
-      - name: Verifica listing source (envelope paginato + SQLite)
-        if: matrix.domain == 'source'
+      - name: Verifica BFF media -> source (envelope paginato)
+        if: matrix.domain == 'media'
         run: |
-          url="http://localhost:${PROXY_HTTP_PORT}/v0/source/media?type=audio/m4a"
-          body=$(curl -fsS -H "X-API-Key: ${API_KEY}" "$url") || { echo "::error::listing source non raggiungibile"; exit 1; }
+          url="http://localhost:${PROXY_HTTP_PORT}/v0/media?type=audio/m4a"
+          body=$(curl -fsS -H "X-API-Key: ${API_KEY}" "$url") || { echo "::error::media non raggiungibile"; exit 1; }
           echo "$body"
-          echo "$body" | grep -q '"pagination"' || { echo "::error::envelope paginato mancante"; exit 1; }
-          echo "OK: listing source valido"
+          echo "$body" | grep -q '"pagination"' || { echo "::error::envelope (media->source) mancante"; exit 1; }
+          echo "OK: BFF media->source valido"

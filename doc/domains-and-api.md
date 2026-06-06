@@ -10,35 +10,44 @@ Convenzioni comuni:
 
 ---
 
-## Dominio `media`
+## Dominio `media` — BFF pubblico
 
-Gestione dei file media auto-scaricati. Contratto: `openapi/media/api.yaml`.
+`media` è il **dominio pubblico** (Backend-for-Frontend): l'unico esposto al FrontEnd. Orchestra il
+dominio **interno** `source` (vedi sotto) e ri-mappa gli URL dei byte da `/v0/source/...` a
+`/v0/media/...`. Contratto: `openapi/media/api.yaml`.
 
-### `GET /v0/media`
-Lista di tutti i file media. Protetto (`X-API-Key`).
+```
+FrontEnd ──► /v0/media/*  ──►  [media BFF]  ──(rete docker: source:8080)──►  [source interno]
+```
 
-Risposta `200`: array di `MediaItem`.
+Endpoint (specchio di `source`, sul path pubblico):
 
-| Campo | Tipo | Note |
-|-------|------|------|
-| `id` | int | id univoco |
-| `name` | string | nome file (es. `data_NomeFile.m4a`) |
-| `creation_date_s` | int | timestamp Unix (s) |
-| `download_link` | string(uri) | link di download |
-| `status` | enum | `draft` \| `processing` \| `published` |
-| `pubblicazione` | object\|null | `titolo`, `description`, `cover_image`, `publishing_date_s` (tutti nullable) |
+| Endpoint | Cosa fa |
+|----------|---------|
+| `GET /v0/media?type=&title=&page=&page_size=` | lista (delega a source); URL ri-mappati su `/v0/media` |
+| `GET /v0/media/{id}` | metadati del singolo media |
+| `GET /v0/media/{id}/content[?download=1]` | byte: inline (play) o allegato (download) |
+| `POST /v0/media` | upload (multipart, delegato a source) |
 
-**Implementazione attuale:** risposta **statica** da `MediaService.list_all()` (3 item di esempio),
-conforme allo schema (`validate_responses=True`). Sostituibile con persistenza reale senza toccare
-controller né contratto.
+**Download/streaming — il nodo `media → source`** (`MediaService` + `SourceGateway`):
+- `media` chiama `source` con `follow_redirects=False`;
+- **coll/prod**: source risponde `302` → media **propaga il 302** verso lo storage; il client scarica
+  diretto, media resta **fuori dal path dei byte**;
+- **dev**: source risponde `200` (storage locale) → media **relaia i byte** (limite di dev accettato).
+
+Il gateway usa **HTTP diretto** (httpx) sulla rete docker, non l'SDK generato (il runtime non usa
+`generated/`). Config: `SOURCE_INTERNAL_URL` (default `http://source:8080/v0/source`), `API_KEY`.
+
+> Evoluzione: `media` potrà arricchire i metadati con la propria business logic (es. pubblicazione)
+> oltre ai dati grezzi di `source`.
 
 ---
 
-## Dominio `source`
+## Dominio `source` — interno
 
-Bridge verso file system e database dei media sorgente; pensato per essere interrogato da un
-FrontEnd (media management e **play da browser** / streaming audio). Contratto:
-`openapi/source/api.yaml`.
+Bridge verso file system e database dei media sorgente. **Dominio interno**: marcato
+`openapi/source/.internal`, **non** instradato dal reverse-proxy pubblico (raggiungibile solo sulla
+rete docker `mediamgr`, dal BFF `media`). Contratto: `openapi/source/api.yaml`.
 
 ### `GET /v0/source/media`
 Recupera media sorgente filtrati. Protetto (`X-API-Key`). Restituisce **sempre** un envelope
@@ -219,7 +228,7 @@ media sono scaricabili via `/content`. Utile per validare la catena dopo un depl
 | Upload server-side | ✅ `POST /v0/source/media` (multipart) | — |
 | Upload pre-signed (browser→storage) | predisposto (`presigned_upload_url` + `get_upload_url`) | endpoint dedicato in coll/prod |
 | Byte `GET /v0/source/media/{id}/content` | ✅ inline/`?download=1`, 302 in coll/prod, streaming+Range in dev | — |
-| Dominio `media` come BFF pubblico | — | esporre `media`, tenere `source` interno; download via redirect (relay solo in dev) |
+| Dominio `media` come BFF pubblico | ✅ `media` espone, `source` interno (`.internal`); download via 302 passthrough (relay solo in dev) | arricchimento metadati business |
 | `SqliteSourceMediaRepository` `insert`/`get` | ✅ (usati da upload e seed) | — |
 
 ---
@@ -232,3 +241,7 @@ Grazie alla discovery, basta:
 3. `docker-compose.<nuovo>.yml` + `config/<nuovo>/<env>.env`.
 
 Makefile, CI e proxy si adattano da soli (wildcard sui domini). Nessun hardcoding.
+
+Per un dominio **interno** (non esposto pubblicamente, mediato da un BFF): aggiungere il marker
+`openapi/<nuovo>/.internal` → il reverse-proxy non lo instrada e lo smoke lo verifica sulla rete
+docker. Vedi `media`/`source`.

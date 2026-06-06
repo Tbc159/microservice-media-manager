@@ -1,7 +1,57 @@
-from src.domains.media.services.media_service import MediaService
+"""Controller del dominio `media` (BFF pubblico su `source`).
 
-_service = MediaService()
+Thin layer: delega al MediaService (gateway verso source) e traduce gli esiti in
+risposte HTTP. Per i byte: 302 (propagato da source in coll/prod) oppure relay dei
+byte (dev).
+"""
+from typing import Optional
+
+from src.domains.media.factory import build_media_service
+
+_service = build_media_service()
+
+_TRUTHY = {"1", "true", "yes", "on"}
 
 
-def list_media():
-    return _service.list_all(), 200
+def _is_truthy(value) -> bool:
+    return value is not None and str(value).strip().lower() in _TRUTHY
+
+
+def list_media(
+    type: str,
+    title: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[dict, int]:
+    return _service.list(media_type=type, title=title, page=page, page_size=page_size), 200
+
+
+def get_media(id: int):
+    item = _service.get(id)
+    return (item, 200) if item is not None else ("", 404)
+
+
+def get_media_content(id: int, download: Optional[str] = None):
+    result = _service.content(id, download=_is_truthy(download))
+    if result is None:
+        return "", 404
+    if result.redirect_url:
+        return "", 302, {"Location": result.redirect_url}
+    headers = {"Content-Type": result.content_type or "application/octet-stream"}
+    if result.content_disposition:
+        headers["Content-Disposition"] = result.content_disposition
+    return result.body, 200, headers
+
+
+def upload_media(body: dict, file):
+    filename = (getattr(file, "filename", "") or "").strip()
+    if not filename:
+        return {"detail": "file mancante o privo di nome"}, 400
+    result = _service.upload(
+        title=body["title"],
+        media_type=body["media_type"],
+        filename=filename,
+        data=file.read(),
+        duration_s=body.get("duration_s"),
+    )
+    return result.payload, result.status_code
