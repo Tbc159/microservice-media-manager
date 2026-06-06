@@ -20,6 +20,18 @@ class StorageBackend(Protocol):
         """URL pre-firmato per il PUT (upload diretto). None se non supportato (local)."""
         ...
 
+    def get_download_url(
+        self, object_key: str, filename: str, ttl_seconds: int = 3600
+    ) -> Optional[str]:
+        """URL pre-firmato per il GET come allegato (Content-Disposition: attachment).
+        None con storage locale: in quel caso il download e' servito dall'API."""
+        ...
+
+    def local_path(self, object_key: str) -> Optional[str]:
+        """Path su file system dell'oggetto, se il backend e' locale e il file esiste.
+        None per i backend remoti (S3/MinIO), che usano gli URL pre-firmati."""
+        ...
+
     def put_object(self, object_key: str, data: bytes, content_type: str) -> None:
         """Scrive i byte lato server (seeding, upload locale in dev)."""
         ...

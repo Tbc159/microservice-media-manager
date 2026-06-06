@@ -57,8 +57,18 @@ def test_item_contract(client):
     r = client.get("/v0/source/media?type=audio/m4a", headers=_KEY)
     item = r.json()["items"][0]
     assert {"id", "title", "filename", "media_type", "created_at_s", "status"} <= item.keys()
-    assert "stream_url" in item and item["stream_url"] is None  # local backend
+    assert item["content_url"] == f"/v0/source/media/{item['id']}/content"
+    assert item["download_url"] == f"/v0/source/media/{item['id']}/content?download=1"
+    assert "stream_url" not in item
     assert "object_key" not in item  # dettaglio interno mai esposto
+
+
+def test_get_single_item(client):
+    r = client.get("/v0/source/media/1", headers=_KEY)
+    assert r.status_code == 200
+    assert r.json()["id"] == 1
+    assert client.get("/v0/source/media/99999", headers=_KEY).status_code == 404
+    assert client.get("/v0/source/media/1").status_code == 401  # senza chiave
 
 
 def test_filter_by_title(client):
@@ -107,7 +117,7 @@ def test_upload_returns_201_with_record(client):
     assert b["size_bytes"] == 5
     assert b["duration_s"] == 55
     assert b["status"] == "ready"
-    assert b["stream_url"] is None        # storage locale
+    assert b["content_url"] == f"/v0/source/media/{b['id']}/content"
     assert "object_key" not in b
 
 
@@ -135,3 +145,44 @@ def test_upload_missing_title_rejected(client):
 def test_upload_requires_api_key(client):
     r = _upload(client, headers=None)
     assert r.status_code == 401
+
+
+# --- GET /v0/source/media/{id}/content (play inline / download) ---
+
+
+def test_content_inline_by_default(client):
+    mid = _upload(client, filename="play.m4a", content=b"PLAY-ME-123").json()["id"]
+    r = client.get(f"/v0/source/media/{mid}/content", headers=_KEY)
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/octet-stream"
+    assert "inline" in r.headers["content-disposition"]
+    assert r.content == b"PLAY-ME-123"           # integrita' byte
+
+
+def test_content_download_attachment(client):
+    mid = _upload(client, filename="save.m4a", content=b"SAVE-ME").json()["id"]
+    for value in ("1", "true", "yes"):           # il param accetta piu' valori veri
+        r = client.get(f"/v0/source/media/{mid}/content?download={value}", headers=_KEY)
+        assert r.status_code == 200
+        assert "attachment" in r.headers["content-disposition"]
+        assert "save.m4a" in r.headers["content-disposition"]
+
+
+def test_content_supports_range(client):
+    mid = _upload(client, filename="range.m4a", content=b"0123456789").json()["id"]
+    r = client.get(f"/v0/source/media/{mid}/content", headers={**_KEY, "Range": "bytes=0-3"})
+    assert r.status_code == 206
+    assert r.content == b"0123"
+
+
+def test_content_absent_id_returns_404(client):
+    assert client.get("/v0/source/media/99999/content", headers=_KEY).status_code == 404
+
+
+def test_content_record_without_bytes_returns_404(client):
+    # I record seed (es. id=1) non hanno file su storage -> 404
+    assert client.get("/v0/source/media/1/content", headers=_KEY).status_code == 404
+
+
+def test_content_requires_api_key(client):
+    assert client.get("/v0/source/media/1/content").status_code == 401

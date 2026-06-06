@@ -40,6 +40,22 @@ class MinioStorageBackend:
             self._bucket, object_key, expires=timedelta(seconds=ttl_seconds)
         )
 
+    def get_download_url(
+        self, object_key: str, filename: str, ttl_seconds: int = 3600
+    ) -> Optional[str]:
+        # response-content-disposition forza il download col nome file originale
+        return self._client.presigned_get_object(
+            self._bucket,
+            object_key,
+            expires=timedelta(seconds=ttl_seconds),
+            response_headers={
+                "response-content-disposition": f'attachment; filename="{filename}"'
+            },
+        )
+
+    def local_path(self, object_key: str) -> Optional[str]:
+        return None  # backend remoto: si usa get_download_url
+
     def put_object(self, object_key: str, data: bytes, content_type: str) -> None:
         self._client.put_object(
             self._bucket,

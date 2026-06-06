@@ -15,7 +15,7 @@ class SourceMediaRepository(Protocol):
     Disaccoppia il SourceService dallo storage concreto: Mock (statico, dev/test)
     e Sqlite (coll/prod) sono intercambiabili senza toccare service ne' controller.
     I record restituiti contengono `object_key` (riferimento interno allo storage);
-    il service lo traduce in `stream_url` prima di esporlo via API.
+    il service lo traduce in `content_url`/`download_url` prima di esporlo via API.
     """
 
     def find(

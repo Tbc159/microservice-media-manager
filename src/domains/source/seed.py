@@ -1,7 +1,7 @@
 """Seed idempotente del dominio source — verifica end-to-end di DB + storage.
 
-Inserisce alcuni record demo e carica un placeholder sullo storage, cosi' che gli
-stream_url pre-firmati risolvano a un oggetto reale. Rieseguibile senza effetti:
+Inserisce alcuni record demo e carica un placeholder sullo storage, cosi' che i media
+siano scaricabili/streammabili via /content. Rieseguibile senza effetti:
 salta se esistono gia' record per il media_type.
 
 Uso (dentro il container, dopo il deploy — es. in collaudo):
