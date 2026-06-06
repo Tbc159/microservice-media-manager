@@ -61,10 +61,13 @@ interno), un container per dominio, e — in coll/prod — un container **MinIO*
 
 ```
                  (proxy esterno duckdns, manuale)        rete docker interna "mediamgr"
-Internet ─► <dom>.duckdns.org ─► ip:port/ ─► mediamgr-proxy ─┬─► /v0/media/  → media:8080
-                                              (nginx, NOSTRO) ├─► /v0/source/ → source:8080 ─► minio:9000 (coll/prod)
-                                                              └─► ...
+Internet ─► <dom>.duckdns.org ─► ip:port/ ─► mediamgr-proxy ──► /v0/media/ → media:8080 (BFF pubblico)
+                                              (nginx, NOSTRO)                     │
+                                                                                 └─► source:8080 (INTERNO, .internal)
+                                                                                        └─► minio:9000 (coll/prod)
 ```
+> `source` è marcato `openapi/source/.internal`: il proxy **non** lo instrada (solo rete docker).
+> Raggiungibile solo dal BFF `media`. Vedi [domains-and-api.md](domains-and-api.md).
 
 Due livelli di proxy:
 - **esterno** (duckdns → `ip:port/`): forwarding del dominio pubblico, gestito a mano, fuori pipeline;
@@ -72,8 +75,9 @@ Due livelli di proxy:
   **gestito dalla pipeline**.
 
 ### Reverse-proxy interno
-- `deploy/proxy/gen-nginx-conf.sh` genera `deploy/proxy/nginx.conf` dai domini scoperti
-  (zero-hardcoding). Per ogni dominio crea **due** location:
+- `deploy/proxy/gen-nginx-conf.sh` genera `deploy/proxy/nginx.conf` dai domini **pubblici**
+  scoperti (zero-hardcoding; salta quelli con marker `openapi/<dom>/.internal`). Per ogni dominio
+  pubblico crea **due** location:
   - `location = /v0/<dom>` (exact match) — evita il 301 automatico di nginx senza slash finale;
   - `location /v0/<dom>/` (prefix) — sottopath (`/health`, listing, ecc.).
 - Upstream risolti a runtime via DNS Docker (`set $up_<dom> <dom>:8080; proxy_pass …$request_uri`):
