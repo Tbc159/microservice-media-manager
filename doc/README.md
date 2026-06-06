@@ -24,6 +24,7 @@ Riflettono **cosa** è deployato nel branch: possono variare tra ambienti.
 | Documento | Contenuto |
 |-----------|-----------|
 | [domains-and-api.md](domains-and-api.md) | API per dominio e architettura dei domini presenti nel branch, implementazioni attuali/future |
+| [api-reference.md](api-reference.md) | Riferimento endpoint **pubblici (esterni)** vs **interni** e loro utilizzo (esempi `curl`) |
 | [changelog.md](changelog.md) | Storico: cosa è stato implementato/predisposto dall'ultimo README a oggi |
 
 Runbook operativi (fuori da `doc/`):
