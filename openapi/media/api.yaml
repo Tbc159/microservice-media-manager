@@ -171,7 +171,21 @@ paths:
             example: "1"
       responses:
         '200':
-          description: Byte del file (relay da source in dev)
+          description: Byte del file (relay da source in dev); supporta Range
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Contenuto parziale (risposta a una richiesta Range)
+          headers:
+            Content-Range:
+              schema:
+                type: string
+            Accept-Ranges:
+              schema:
+                type: string
           content:
             application/octet-stream:
               schema:

@@ -31,11 +31,17 @@ class _FakeGateway:
     def get_media(self, media_id):
         return _src_item(media_id) if media_id == 1 else None
 
-    def get_content(self, media_id, *, download):
+    def get_content(self, media_id, *, download, range_header=None, head=False):
         if media_id == 1:  # dev: source relaia i byte
+            if range_header:  # source risponde 206 a una richiesta Range
+                return ContentResult(
+                    body=b"BY", status_code=206, content_type="application/octet-stream",
+                    content_range="bytes 0-1/5", accept_ranges="bytes",
+                )
             disp = ("attachment" if download else "inline") + "; filename=p.m4a"
             return ContentResult(
-                body=b"BYTES", content_type="application/octet-stream", content_disposition=disp
+                body=(b"" if head else b"BYTES"), content_type="application/octet-stream",
+                content_disposition=disp, accept_ranges="bytes",
             )
         if media_id == 2:  # coll/prod: source risponde 302
             return ContentResult(redirect_url="https://storage/presigned")
@@ -72,6 +78,13 @@ def test_content_relay_dev():
     assert r.redirect_url is None
     assert r.body == b"BYTES"
     assert "inline" in r.content_disposition
+
+
+def test_content_range_relays_206():
+    r = _svc().content(1, download=False, range_header="bytes=0-1")
+    assert r.status_code == 206
+    assert r.content_range == "bytes 0-1/5"
+    assert r.body == b"BY"
 
 
 def test_content_redirect_passthrough_prod():

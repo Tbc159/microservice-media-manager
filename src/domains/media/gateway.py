@@ -19,8 +19,12 @@ import httpx
 class ContentResult:
     redirect_url: Optional[str] = None       # coll/prod: 302 verso lo storage
     body: Optional[bytes] = None             # dev: byte relayati da source
+    status_code: int = 200                   # 200 oppure 206 (Range)
     content_type: Optional[str] = None
     content_disposition: Optional[str] = None
+    content_range: Optional[str] = None      # presente su 206
+    accept_ranges: Optional[str] = None      # es. "bytes"
+    content_length: Optional[str] = None
 
 
 @dataclass
@@ -61,12 +65,23 @@ class SourceGateway:
         r.raise_for_status()
         return r.json()
 
-    def get_content(self, media_id: int, *, download: bool) -> Optional[ContentResult]:
+    def get_content(
+        self,
+        media_id: int,
+        *,
+        download: bool,
+        range_header: Optional[str] = None,
+        head: bool = False,
+    ) -> Optional[ContentResult]:
         params = {"download": "1"} if download else {}
-        r = httpx.get(
+        headers = dict(self._headers)
+        if range_header:
+            headers["Range"] = range_header  # propaga il Range a source (send_file -> 206)
+        method = httpx.head if head else httpx.get
+        r = method(
             f"{self._base}/media/{media_id}/content",
             params=params,
-            headers=self._headers,
+            headers=headers,
             timeout=self._timeout,
             follow_redirects=False,
         )
@@ -76,9 +91,13 @@ class SourceGateway:
             return ContentResult(redirect_url=r.headers.get("location"))
         r.raise_for_status()
         return ContentResult(
-            body=r.content,
+            body=(b"" if head else r.content),
+            status_code=r.status_code,                       # 200 o 206
             content_type=r.headers.get("content-type"),
             content_disposition=r.headers.get("content-disposition"),
+            content_range=r.headers.get("content-range"),
+            accept_ranges=r.headers.get("accept-ranges"),
+            content_length=r.headers.get("content-length"),
         )
 
     def upload_media(
