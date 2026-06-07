@@ -128,6 +128,16 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
 - > Nota: il proxy **esterno** (duckdns, manuale) va puntato solo su `/v0/media`; `/v0/source` non
   è più esposto pubblicamente.
 
+### 10.1 Range relay nel BFF (2026-06-07)
+
+- **Problema rilevato** testando lo streaming da Kodi: un `.m4a` **non-faststart** (atomo `moov` in
+  fondo) non parte perché il relay del BFF in dev rispondeva sempre con il file intero (`200`,
+  niente Range) → il player non riesce a "seekare" per leggere il `moov` → *failed to play*.
+- **Fix**: `media` ora **propaga il Range** a `source` (che lo supporta già via `flask.send_file`):
+  inoltra l'header `Range`, relaia `206`/`Content-Range` e annuncia `Accept-Ranges: bytes`; gestisce
+  anche `HEAD` (via `httpx.head`, senza scaricare i byte). Così i player possono seekare e
+  riprodurre i `.m4a` non-faststart anche in dev. Test a **70**.
+
 | Componente | Stato (target dopo merge di questa linea) |
 |------------|-------|
 | `media` container | **BFF pubblico**: list/`{id}`/`{id}/content`/upload, delega a source |

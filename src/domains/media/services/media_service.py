@@ -43,8 +43,17 @@ class MediaService:
         item = self._gw.get_media(media_id)
         return _remap(item) if item is not None else None
 
-    def content(self, media_id: int, *, download: bool) -> Optional[ContentResult]:
-        return self._gw.get_content(media_id, download=download)
+    def content(
+        self,
+        media_id: int,
+        *,
+        download: bool,
+        range_header: Optional[str] = None,
+        head: bool = False,
+    ) -> Optional[ContentResult]:
+        return self._gw.get_content(
+            media_id, download=download, range_header=range_header, head=head
+        )
 
     def upload(
         self,

@@ -6,6 +6,8 @@ byte (dev).
 """
 from typing import Optional
 
+import flask
+
 from src.domains.media.factory import build_media_service
 
 _service = build_media_service()
@@ -32,15 +34,31 @@ def get_media(id: int):
 
 
 def get_media_content(id: int, download: Optional[str] = None):
-    result = _service.content(id, download=_is_truthy(download))
+    req = flask.request
+    is_head = req.method == "HEAD"
+    result = _service.content(
+        id,
+        download=_is_truthy(download),
+        range_header=req.headers.get("Range"),
+        head=is_head,
+    )
     if result is None:
         return "", 404
     if result.redirect_url:
         return "", 302, {"Location": result.redirect_url}
-    headers = {"Content-Type": result.content_type or "application/octet-stream"}
+    # Accept-Ranges + propagazione del Range: i player (Kodi, browser) possono "seekare"
+    # per leggere il moov dei .m4a non-faststart.
+    headers = {
+        "Content-Type": result.content_type or "application/octet-stream",
+        "Accept-Ranges": result.accept_ranges or "bytes",
+    }
     if result.content_disposition:
         headers["Content-Disposition"] = result.content_disposition
-    return result.body, 200, headers
+    if result.content_range:
+        headers["Content-Range"] = result.content_range
+    if is_head and result.content_length:
+        headers["Content-Length"] = result.content_length
+    return result.body, result.status_code, headers
 
 
 def upload_media(body: dict, file):

@@ -41,11 +41,17 @@ class _FakeGateway:
     def get_media(self, media_id):
         return _src_item(media_id) if media_id == 1 else None
 
-    def get_content(self, media_id, *, download):
+    def get_content(self, media_id, *, download, range_header=None, head=False):
         if media_id == 1:
+            if range_header:
+                return ContentResult(
+                    body=b"BY", status_code=206, content_type="application/octet-stream",
+                    content_range="bytes 0-1/5", accept_ranges="bytes",
+                )
             disp = ("attachment" if download else "inline") + "; filename=p.m4a"
             return ContentResult(
-                body=b"BYTES", content_type="application/octet-stream", content_disposition=disp
+                body=(b"" if head else b"BYTES"), content_type="application/octet-stream",
+                content_disposition=disp, accept_ranges="bytes",
             )
         if media_id == 2:
             return ContentResult(redirect_url="https://storage/presigned?sig=x")
@@ -88,7 +94,16 @@ def test_content_relay_dev(client):
     r = client.get("/v0/media/1/content", headers=_KEY)
     assert r.status_code == 200
     assert "inline" in r.headers["content-disposition"]
+    assert r.headers["accept-ranges"] == "bytes"      # i player sanno di poter seekare
     assert r.content == b"BYTES"
+
+
+def test_content_range_relays_206(client):
+    # Range propagato a source -> 206 parziale (necessario per i .m4a non-faststart)
+    r = client.get("/v0/media/1/content", headers={**_KEY, "Range": "bytes=0-1"})
+    assert r.status_code == 206
+    assert r.headers["content-range"] == "bytes 0-1/5"
+    assert r.content == b"BY"
 
 
 def test_content_download_attachment(client):
