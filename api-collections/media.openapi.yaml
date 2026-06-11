@@ -226,7 +226,9 @@ paths:
 components:
   securitySchemes:
     ApiKeyAuth:
-      $ref: '#/components/securitySchemes/ApiKeyAuth'
+      type: apiKey
+      in: header
+      name: X-API-Key
   schemas:
     MediaItem:
       type: object
