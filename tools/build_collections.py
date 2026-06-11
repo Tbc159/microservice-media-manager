@@ -143,13 +143,21 @@ def _inline_shared(spec: dict, shared: dict) -> None:
         parts = pointer.lstrip("#/").split("/")
         category, name = parts[1], parts[2]
         component = copy.deepcopy(_resolve_pointer(shared, pointer))
-        spec["components"].setdefault(category, {}).setdefault(name, component)
+        # Sovrascrive: se il componente era *definito* come $ref al file condiviso
+        # (es. securitySchemes.ApiKeyAuth), il placeholder riscritto sarebbe diventato
+        # auto-referenziale. Qui lo rimpiazziamo col contenuto reale.
+        spec["components"].setdefault(category, {})[name] = component
         walk(component)  # eventuali $ref annidati nel componente copiato
 
 
 def _build_one(domain: str, shared: dict) -> dict:
     spec = yaml.safe_load((OPENAPI_DIR / domain / "api.yaml").read_text())
     _inline_shared(spec, shared)
+
+    # Estensione di wiring server-side (connexion): irrilevante e fuorviante per i consumer.
+    for scheme in spec.get("components", {}).get("securitySchemes", {}).values():
+        if isinstance(scheme, dict):
+            scheme.pop("x-apikeyInfoFunc", None)
 
     internal = _is_internal(domain)
     spec["servers"] = copy.deepcopy(INTERNAL_SERVERS if internal else PUBLIC_SERVERS)
