@@ -7,7 +7,7 @@ GENERATOR_URL     := https://repo1.maven.org/maven2/org/openapitools/openapi-gen
 # Aggiungere openapi/social/api.yaml crea il dominio 'social' senza toccare nulla qui.
 DOMAINS := $(notdir $(patsubst %/,%,$(dir $(wildcard openapi/*/api.yaml))))
 
-.PHONY: help install domains validate generate-all clean test lint mock proxy-config seed-source
+.PHONY: help install domains validate generate-all clean test lint mock proxy-config seed-source collections collections-check
 
 help: ## elenca i target
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -48,6 +48,12 @@ mock: ## avvia il mock (tutti i domini, risposte = examples OAS)
 
 proxy-config: ## (ri)genera deploy/proxy/nginx.conf dai domini scoperti
 	bash deploy/proxy/gen-nginx-conf.sh
+
+collections: ## (ri)genera i bundle OpenAPI condivisibili in api-collections/
+	python3 tools/build_collections.py
+
+collections-check: ## verifica che i bundle in api-collections/ siano allineati alle spec (CI)
+	python3 tools/build_collections.py --check
 
 seed-source: ## inserisce dati demo nel dominio source (idempotente, dentro il container)
 	docker compose -f docker-compose.source.yml exec source python -m src.domains.source.seed

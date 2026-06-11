@@ -1,0 +1,391 @@
+# GENERATO da tools/build_collections.py - NON editare a mano.
+# Fonte di verita': openapi/<dominio>/api.yaml. Rigenera con `make collections`.
+openapi: 3.0.3
+info:
+  title: Source API
+  version: 0.1.0
+  description: 'Dominio "source": bridge verso file system e database dei media sorgente.
+
+    base_path /v0 applicato da src/app.py; i path qui sono relativi.
+
+    URL effettivi: /v0/source/health, /v0/source/media.
+
+
+    > **Dominio INTERNO**: non esposto dal reverse-proxy pubblico. Raggiungibile solo sulla rete docker
+    `mediamgr` (tramite il BFF) o via port-forward locale. I server qui sotto riflettono questo: non esiste
+    un host pubblico.'
+servers:
+- url: http://{service}:8080/v0
+  description: INTERNO - raggiungibile SOLO sulla rete docker 'mediamgr' (service-to-service). Non instradato
+    dal proxy pubblico.
+  variables:
+    service:
+      default: source
+      description: Nome del service docker del dominio interno.
+- url: http://{local_forward}/v0
+  description: INTERNO via port-forward locale (docker compose port / ssh tunnel) per test diretti.
+  variables:
+    local_forward:
+      default: localhost:8081
+      description: host:porta di un forward verso il container del dominio interno.
+paths:
+  /source/health:
+    get:
+      operationId: get_health
+      tags:
+      - source
+      summary: Health check del dominio source
+      responses:
+        '200':
+          description: Servizio attivo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: ok
+  /source/media:
+    get:
+      operationId: query_source_media
+      tags:
+      - source
+      summary: Recupera media sorgente filtrati per tipo e titolo opzionale
+      description: 'Restituisce sempre un envelope paginato (items puo'' essere vuoto, non e'' un errore).
+
+        - Solo `type`: tutti i record con quel MIME type.
+
+        - Con `title`: filtra per titolo esatto.
+
+        - `page` e `page_size` controllano la finestra di risultati.
+
+        '
+      security:
+      - ApiKeyAuth: []
+      parameters:
+      - name: type
+        in: query
+        required: true
+        description: MIME type dei contenuti da recuperare
+        schema:
+          type: string
+          enum:
+          - audio/m4a
+          - audio/mp3
+          - video/mp4
+          example: audio/m4a
+      - name: title
+        in: query
+        required: false
+        description: Filtra per titolo esatto. Omettere per tutti i record del tipo.
+        schema:
+          type: string
+          example: Puntata pilota
+      - name: page
+        in: query
+        required: false
+        description: Numero di pagina (1-based)
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          example: 1
+      - name: page_size
+        in: query
+        required: false
+        description: Numero di risultati per pagina (max 100)
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+          example: 20
+      responses:
+        '200':
+          description: Risultati paginati; items puo' essere vuoto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceMediaPagedResponse'
+              example:
+                items:
+                - id: 1
+                  title: Puntata pilota
+                  filename: 2024-01-puntata-pilota.m4a
+                  media_type: audio/m4a
+                  size_bytes: 48234567
+                  duration_s: 3012
+                  created_at_s: 1700000000
+                  status: ready
+                  content_url: /v0/source/media/1/content
+                  download_url: /v0/source/media/1/content?download=1
+                  metadata: {}
+                pagination:
+                  page: 1
+                  page_size: 20
+                  total: 2
+                  total_pages: 1
+        '400':
+          description: Parametro `type` mancante o non valido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: upload_source_media
+      tags:
+      - source
+      summary: Carica un nuovo media (upload server-side, multipart)
+      description: 'Upload server-side: l''API riceve il file, ne salva i byte nello storage
+
+        (FS in dev, MinIO/S3 in coll/prod) e inserisce i metadati nel DB SQLite.
+
+        Risponde con il record creato. In coll/prod e'' previsto anche il flusso
+
+        pre-signed (browser -> storage diretto); vedi doc/domains-and-api.md.
+
+        '
+      security:
+      - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              - title
+              - media_type
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Contenuto del media da caricare
+                title:
+                  type: string
+                  description: Titolo del contenuto
+                  example: Nuova puntata
+                media_type:
+                  type: string
+                  enum:
+                  - audio/m4a
+                  - audio/mp3
+                  - video/mp4
+                  example: audio/m4a
+                duration_s:
+                  type: integer
+                  nullable: true
+                  description: Durata in secondi (opzionale)
+      responses:
+        '201':
+          description: Media creato; restituisce il record (con content_url/download_url)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceMediaItem'
+        '400':
+          description: Richiesta non valida (campi mancanti o media_type fuori enum)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Esiste gia' un media con lo stesso nome/oggetto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /source/media/{id}:
+    get:
+      operationId: get_source_media
+      tags:
+      - source
+      summary: Recupera il singolo record (metadati) di un media
+      description: 'Restituisce i **metadati** del media (il listing e'' su `GET /source/media`).
+
+        I **byte** sono sulla sotto-risorsa `GET /source/media/{id}/content`.
+
+        '
+      security:
+      - ApiKeyAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: ID del media
+        schema:
+          type: integer
+          example: 1
+      responses:
+        '200':
+          description: Metadati del media
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceMediaItem'
+        '404':
+          description: Media non trovato (nessun corpo)
+  /source/media/{id}/content:
+    get:
+      operationId: get_source_media_content
+      tags:
+      - source
+      summary: Byte del media (play inline o download)
+      description: "Restituisce i byte del media. Stessi byte dallo stesso storage; cambia solo la\nContent-Disposition:\n\
+        - default: **inline** (per il player);\n- `?download=1|true|yes|on`: **allegato** (salva su disco).\n\
+        \nPer ambiente:\n- coll/prod (S3/MinIO): `302` con `Location` verso un URL pre-firmato → il client\n\
+        \  scarica/streamma direttamente dallo storage (l'API resta fuori dal path dei byte).\n- dev (storage\
+        \ locale): l'API streamma i byte dal file system, con supporto Range.\n"
+      security:
+      - ApiKeyAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: ID del media
+        schema:
+          type: integer
+          example: 1
+      - name: download
+        in: query
+        required: false
+        description: Se valorizzato (1|true|yes|on), forza il download come allegato.
+        schema:
+          type: string
+          example: '1'
+      responses:
+        '200':
+          description: Byte del file (storage locale / dev)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '302':
+          description: Redirect verso URL pre-firmato (coll/prod)
+          headers:
+            Location:
+              description: URL pre-firmato (scade)
+              schema:
+                type: string
+                format: uri
+        '404':
+          description: Media non trovato (nessun corpo)
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      $ref: '#/components/securitySchemes/ApiKeyAuth'
+  schemas:
+    SourceMediaItem:
+      type: object
+      required:
+      - id
+      - title
+      - filename
+      - media_type
+      - created_at_s
+      - status
+      - content_url
+      - download_url
+      properties:
+        id:
+          type: integer
+          description: ID univoco del record DB
+          example: 1
+        title:
+          type: string
+          description: Titolo del contenuto
+          example: Puntata pilota
+        filename:
+          type: string
+          description: Nome del file originale
+          example: 2024-01-puntata-pilota.m4a
+        media_type:
+          type: string
+          description: MIME type
+          example: audio/m4a
+        size_bytes:
+          type: integer
+          nullable: true
+          description: Dimensione in byte; null se non ancora calcolata
+          example: 48234567
+        duration_s:
+          type: integer
+          nullable: true
+          description: Durata del media in secondi; null se non ancora estratta
+          example: 3012
+        created_at_s:
+          type: integer
+          description: Timestamp Unix di creazione record
+          example: 1700000000
+        status:
+          type: string
+          enum:
+          - ready
+          - processing
+          - error
+          description: Stato del contenuto nel ciclo di vita
+          example: ready
+        content_url:
+          type: string
+          description: 'URL (relativo) per ottenere i byte inline, per il player. L''endpoint redirige
+            allo storage in coll/prod o streamma dal FS in dev.
+
+            '
+          example: /v0/source/media/1/content
+        download_url:
+          type: string
+          description: URL (relativo) per scaricare il file come allegato.
+          example: /v0/source/media/1/content?download=1
+        metadata:
+          type: object
+          nullable: true
+          description: Campi estensibili per future integrazioni DB
+          additionalProperties: true
+    SourceMediaPagedResponse:
+      type: object
+      required:
+      - items
+      - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceMediaItem'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+    PaginationMeta:
+      type: object
+      required:
+      - page
+      - page_size
+      - total
+      - total_pages
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          example: 1
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 100
+          example: 20
+        total:
+          type: integer
+          minimum: 0
+          example: 45
+        total_pages:
+          type: integer
+          minimum: 0
+          example: 3
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
