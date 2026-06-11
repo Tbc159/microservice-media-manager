@@ -39,6 +39,9 @@ jobs:
       - name: Generate all (fresh)
         run: make generate-all
 
+      - name: Check api-collections in sync
+        run: make collections-check
+
       # In modalita' "commit del generato" decommenta per imporre la coerenza:
       # - name: Check generated up-to-date
       #   run: |

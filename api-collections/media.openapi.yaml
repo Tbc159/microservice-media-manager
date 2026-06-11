@@ -1,0 +1,328 @@
+# GENERATO da tools/build_collections.py - NON editare a mano.
+# Fonte di verita': openapi/<dominio>/api.yaml. Rigenera con `make collections`.
+openapi: 3.0.3
+info:
+  title: Media API
+  version: 0.2.0
+  description: 'Dominio "media": **BFF pubblico** verso il dominio interno "source". Il FrontEnd parla
+
+    solo con /v0/media; media orchestra source sulla rete interna e ri-mappa gli URL dei byte
+
+    su /v0/media. base_path /v0 e'' applicato da src/app.py.
+
+    '
+servers:
+- url: http://mediamanager-dev.duckdns.org/v0
+  description: 'dev (staging) - reverse-proxy esterno duckdns. Usa http: l''https ha cert self-signed.'
+- url: https://{coll_host}/v0
+  description: coll (collaudo) - imposta coll_host (host pubblico dell'ambiente di collaudo).
+  variables:
+    coll_host:
+      default: REPLACE_WITH_COLL_HOST
+      description: Host pubblico dell'ambiente collaudo (vive nei secret, non versionato).
+paths:
+  /media/health:
+    get:
+      operationId: get_health
+      tags:
+      - media
+      summary: Health check del dominio media
+      responses:
+        '200':
+          description: Servizio attivo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: ok
+  /media:
+    get:
+      operationId: list_media
+      tags:
+      - media
+      summary: Lista i media (delega a source)
+      description: Envelope paginato; filtro per `type` ed eventuale `title`.
+      security:
+      - ApiKeyAuth: []
+      parameters:
+      - name: type
+        in: query
+        required: true
+        description: MIME type dei contenuti
+        schema:
+          type: string
+          enum:
+          - audio/m4a
+          - audio/mp3
+          - video/mp4
+          example: audio/m4a
+      - name: title
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      responses:
+        '200':
+          description: Risultati paginati
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaPagedResponse'
+        '400':
+          description: Parametro `type` mancante o non valido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: upload_media
+      tags:
+      - media
+      summary: Carica un nuovo media (delega l'upload a source)
+      security:
+      - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              - title
+              - media_type
+              properties:
+                file:
+                  type: string
+                  format: binary
+                title:
+                  type: string
+                media_type:
+                  type: string
+                  enum:
+                  - audio/m4a
+                  - audio/mp3
+                  - video/mp4
+                duration_s:
+                  type: integer
+                  nullable: true
+      responses:
+        '201':
+          description: Media creato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaItem'
+        '400':
+          description: Richiesta non valida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Media gia' presente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /media/{id}:
+    get:
+      operationId: get_media
+      tags:
+      - media
+      summary: Metadati del singolo media
+      security:
+      - ApiKeyAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          example: 1
+      responses:
+        '200':
+          description: Metadati del media
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaItem'
+        '404':
+          description: Media non trovato (nessun corpo)
+  /media/{id}/content:
+    get:
+      operationId: get_media_content
+      tags:
+      - media
+      summary: Byte del media (play inline o download)
+      description: 'Default inline; `?download=1|true|yes|on` -> allegato. media propaga il `302` di
+
+        source verso lo storage in coll/prod (resta fuori dai byte); in dev relaia i byte.
+
+        '
+      security:
+      - ApiKeyAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          example: 1
+      - name: download
+        in: query
+        required: false
+        description: Se valorizzato (1|true|yes|on), forza il download come allegato.
+        schema:
+          type: string
+          example: '1'
+      responses:
+        '200':
+          description: Byte del file (relay da source in dev); supporta Range
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Contenuto parziale (risposta a una richiesta Range)
+          headers:
+            Content-Range:
+              schema:
+                type: string
+            Accept-Ranges:
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '302':
+          description: Redirect verso URL pre-firmato (coll/prod)
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '404':
+          description: Media non trovato (nessun corpo)
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      $ref: '#/components/securitySchemes/ApiKeyAuth'
+  schemas:
+    MediaItem:
+      type: object
+      required:
+      - id
+      - title
+      - filename
+      - media_type
+      - created_at_s
+      - status
+      - content_url
+      - download_url
+      properties:
+        id:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: Puntata pilota
+        filename:
+          type: string
+          example: 2024-01-puntata-pilota.m4a
+        media_type:
+          type: string
+          example: audio/m4a
+        size_bytes:
+          type: integer
+          nullable: true
+        duration_s:
+          type: integer
+          nullable: true
+        created_at_s:
+          type: integer
+          example: 1700000000
+        status:
+          type: string
+          enum:
+          - ready
+          - processing
+          - error
+        content_url:
+          type: string
+          description: URL (relativo) dei byte inline, per il player.
+          example: /v0/media/1/content
+        download_url:
+          type: string
+          description: URL (relativo) dei byte come allegato.
+          example: /v0/media/1/content?download=1
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+    MediaPagedResponse:
+      type: object
+      required:
+      - items
+      - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MediaItem'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+    PaginationMeta:
+      type: object
+      required:
+      - page
+      - page_size
+      - total
+      - total_pages
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          example: 1
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 100
+          example: 20
+        total:
+          type: integer
+          minimum: 0
+          example: 45
+        total_pages:
+          type: integer
+          minimum: 0
+          example: 3
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string
+    Health:
+      type: object
+      properties:
+        status:
+          type: string

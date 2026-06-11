@@ -146,6 +146,19 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
 | MinIO | non in staging (solo coll/prod) |
 | `coll` / `main` | indietro rispetto a develop (vedi [branching-strategy.md](branching-strategy.md)) |
 
+## 11. Collection API condivisibili (`api-collections/`) (2026-06-11)
+
+- **Problema**: importare `openapi/<dom>/api.yaml` direttamente in Bruno/Postman produce endpoint
+  errati — `servers: /v0` è **relativo** (l'importer non lo antepone) e i `$ref` verso
+  `../shared/components.yaml` sono **esterni** (non risolti).
+- **Soluzione**: `tools/build_collections.py` genera un **bundle OpenAPI self-contained per dominio**
+  in `api-collections/<dom>.openapi.yaml`: componenti condivisi **inlineati** + `servers:` **assoluti**.
+  Discovery dei domini come il resto del progetto; il marker `.internal` rende il bundle interno.
+- **Ambienti**: solo **dev** e **coll** (nessun host di produzione nel repo). I domini interni
+  (`source`) hanno server di rete docker / port-forward e sono marcati "INTERNO".
+- **Target**: `make collections` (rigenera) e `make collections-check` (drift-check, eseguito anche
+  in `ci.yaml`). La cartella è versionata su tutti i branch ma resta priva di host prod.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione
