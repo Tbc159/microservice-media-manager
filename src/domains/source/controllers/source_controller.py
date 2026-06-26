@@ -36,6 +36,12 @@ def get_source_media(id: int):
     return (item, 200) if item is not None else ("", 404)
 
 
+def resolve_source_media_by_filename(filename: str):
+    """Risolve i metadati di un media per nome file (uso interno: dominio content)."""
+    item = _service.get_item_by_filename(filename)
+    return (item, 200) if item is not None else ("", 404)
+
+
 def upload_source_media(body: dict, file) -> tuple[dict, int]:
     """Upload server-side multipart: byte -> storage, metadati -> DB.
 

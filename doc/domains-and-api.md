@@ -57,7 +57,7 @@ Query parameter:
 
 | Param | Obblig. | Tipo | Default | Note |
 |-------|---------|------|---------|------|
-| `type` | sì | enum | — | `audio/m4a` \| `audio/mp3` \| `video/mp4` |
+| `type` | sì | enum | — | `audio/m4a` \| `audio/mp3` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` |
 | `title` | no | string | — | match **esatto**; omesso → tutti i record del tipo |
 | `page` | no | int ≥1 | 1 | pagina (1-based) |
 | `page_size` | no | int 1..100 | 20 | risultati per pagina |
@@ -94,8 +94,12 @@ Request `multipart/form-data`:
 |-------|---------|------|------|
 | `file` | sì | binary | contenuto del media (il nome file diventa parte dell'`object_key`) |
 | `title` | sì | string | titolo |
-| `media_type` | sì | enum | `audio/m4a` \| `audio/mp3` \| `video/mp4` |
+| `media_type` | sì | enum | `audio/m4a` \| `audio/mp3` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` |
 | `duration_s` | no | integer | durata in secondi |
+
+> Gli `image/*` sono stati aggiunti per gli **asset** (logo, avatar) usati dal dominio
+> `content` per generare le immagini: si caricano come un media qualsiasi e si referenziano
+> poi per id o nome file.
 
 Risposte: `201` → `SourceMediaItem` (con `content_url`/`download_url`); `400` campi mancanti /
 `media_type` fuori enum; `409` media già presente (stesso `media_type`/`filename` → `object_key`
@@ -118,6 +122,16 @@ Metadati del **singolo** record (il listing è su `GET /v0/source/media`). Prote
 > Scelta di design: `/{id}` = **metadati** (JSON, leggero, cache-abile); i byte sono una
 > sotto-risorsa esplicita. Un `GET /{id}` che restituisse i byte costringerebbe a scaricare il file
 > anche solo per leggere il titolo, e a inventare un altro path per i metadati.
+
+### `GET /v0/source/media/by-filename/{filename}`
+Risolve i metadati di un media per **nome file** (uso **interno**: il dominio `content` referenzia
+gli asset per id *o* per nome). Protetto (`X-API-Key`). `200` → `SourceMediaItem`; `404` se nessun
+record corrisponde. Il filename non è univoco (l'unicità è su `media_type/filename`): in caso di
+collisione tra tipi diversi restituisce il record **più recente**.
+
+> Implementato da `repo.find_by_filename()` (SQLite `ORDER BY created_at_s DESC, id DESC LIMIT 1`)
+> e `SourceService.get_item_by_filename()`. Endpoint a 4 segmenti (`.../by-filename/{filename}`),
+> distinto da `.../{id}` (3 segmenti, id intero): nessuna collisione di routing.
 
 ### `GET /v0/source/media/{id}/content`
 I **byte** del media. Protetto (`X-API-Key`). Stessi byte dallo stesso storage; cambia solo la
@@ -151,7 +165,7 @@ factory.py  ── build_source_service() ── legge l'ambiente, sceglie repo 
         │
 services/source_service.py           orchestrazione: repo.find() → DTO + content_url/download_url
         ├── repositories/            persistenza metadati
-        │     ├── base.py            Protocol SourceMediaRepository (find, get, insert)
+        │     ├── base.py            Protocol SourceMediaRepository (find, get, find_by_filename, insert)
         │     ├── mock_repository.py statico, in-memory (dev/test)
         │     └── sqlite_repository.py  SQLite WAL (coll/prod e dev con DB)
         └── storage/                 byte dei media
@@ -230,6 +244,94 @@ media sono scaricabili via `/content`. Utile per validare la catena dopo un depl
 | Byte `GET /v0/source/media/{id}/content` | ✅ inline/`?download=1`, 302 in coll/prod, streaming+Range in dev | — |
 | Dominio `media` come BFF pubblico | ✅ `media` espone, `source` interno (`.internal`); download via 302 passthrough (relay solo in dev) | arricchimento metadati business |
 | `SqliteSourceMediaRepository` `insert`/`get` | ✅ (usati da upload e seed) | — |
+
+---
+
+## Dominio `content` — generazione immagini (BFF pubblico)
+
+`content` genera **immagini** (copertine, social) a partire da asset già caricati su `/v0/media`.
+È un **BFF pubblico** come `media`: legge gli asset da `source` sulla rete interna, produce
+l'immagine con **Pillow**, la **salva come media** (`image/*`) e ne restituisce gli URL pubblici
+(ri-mappati su `/v0/media`). Contratto: `openapi/content/api.yaml`. Il rendering è portato da
+`microservices-media` (`ytmedia/slide_processor.py`) e reso framework-agnostic.
+
+```
+Client ─► POST /v0/content/image ─► [content] ─(source:8080)─► risolve asset + salva risultato
+                                                  └─► risposta: GeneratedImage (content_url su /v0/media)
+```
+
+### `POST /v0/content/image`
+Genera un'immagine e la salva come media. Protetto (`X-API-Key`). Body **JSON polimorfico**: il
+campo `tipo` (discriminatore) seleziona il generatore e **quali campi** sono ammessi.
+
+| `tipo` | Stato | Campi propri |
+|--------|-------|--------------|
+| `copertina` | ✅ attivo | `titolo`*, `testo_centrale`*, `logo_host`*, `ospiti[≤5]`, `colore_sfondo`, `tipo_sfondo` (`unicolor`\|`sfumato-up`\|`sfumato-down`), `colore_sfumato`, `formato` |
+| `social` | 🚧 draft → `501` | `logo_top`*, `logo_bottom`*, `testo`, `testo_bottom`, `colore_sfondo`, `colore_testo`, `formato` |
+
+(*) obbligatorio. `formato` ∈ `image/png` (default) \| `image/jpeg` \| `image/webp`.
+
+**Asset (`MediaRef`)**: `logo_host`, `ospiti`, `logo_top`/`logo_bottom` accettano un **id media**
+(intero) **oppure** un **nome file** (stringa) — risolti via `source` (id prima, poi filename). Un
+ospite non trovato → **avatar placeholder** (non è un errore); il **logo** mancante → `400`.
+
+Risposte: `201` → `GeneratedImage` `{ id, tipo, media_type, size_bytes, created_at_s, content_url,
+download_url }` (gli URL puntano a `/v0/media/{id}/content`); `400` parametri invalidi o logo non
+trovato; `501` `tipo` non ancora implementato (es. `social`); `401` senza chiave.
+
+**Esempio (Bruno / curl).** Prima carica gli asset come media `image/*` per ottenerne gli id:
+
+```bash
+# 1) carica il logo host (ripeti per gli avatar ospiti) -> annota "id" dalla risposta
+curl -X POST http://mediamanager-dev.duckdns.org/v0/media \
+  -H "X-API-Key: <chiave>" \
+  -F "file=@logo-host.png" -F "title=Logo host" -F "media_type=image/png"
+
+# 2) genera la copertina (logo_host/ospiti per id OPPURE per nome file)
+curl -X POST http://mediamanager-dev.duckdns.org/v0/content/image \
+  -H "X-API-Key: <chiave>" -H "Content-Type: application/json" \
+  -d '{
+        "tipo": "copertina",
+        "titolo": "Bitcoin Radio",
+        "testo_centrale": "è lieto di ospitare",
+        "logo_host": "logo-host.png",
+        "ospiti": [21, 22],
+        "colore_sfondo": "#ff751f",
+        "tipo_sfondo": "unicolor",
+        "formato": "image/png"
+      }'
+# -> 201 { "id": 101, "content_url": "/v0/media/101/content", ... }
+# scarica l'immagine: GET http://mediamanager-dev.duckdns.org/v0/media/101/content
+```
+
+### Architettura
+
+```
+controllers/content_controller.py    thin: body → service → (201 | 400 | 501)
+        │  (assemblato da)
+factory.py  ── build_image_service() ── SOURCE_INTERNAL_URL, API_KEY
+        │
+services/image_service.py            orchestrazione: risolve MediaRef → byte, dispatch su `tipo`,
+        │                            salva su source, ri-mappa URL /v0/source → /v0/media
+        ├── services/copertina_renderer.py   Pillow puro (2560×1440), niente rete/framework
+        └── gateway.py               SourceGateway: resolve_filename, get_bytes (segue il 302), upload_image
+```
+
+> A differenza del gateway di `media` (che **propaga** il 302 nel relay), qui `get_bytes`
+> **segue i redirect**: a `content` servono i byte veri dell'asset per darli a Pillow.
+
+**Font**: il renderer usa i Montserrat (`ExtraBold`/`Light`), **non versionati**. Vanno messi in
+`FONTS_DIR` (default `/app/fonts`, montabile come volume — vedi `docker-compose.content.yml`). Se
+mancano, il renderer **non fallisce**: degrada al font di default di Pillow e logga un warning.
+
+### Implementazioni attuali vs future
+
+| Aspetto | Oggi | Futuro |
+|---------|------|--------|
+| `POST /v0/content/image` `tipo: copertina` | ✅ Pillow, asset per id/nome file, output png/jpeg/webp | — |
+| `tipo: social` | 🚧 schema draft → `501` | porting di `social_processor.py` (1080×1080) |
+| Salvataggio risultato | ✅ come media `image/*` via `source`, recupero via `/v0/media` | — |
+| Font Montserrat | ⚠️ fallback al default se assenti | TTF montati in `FONTS_DIR` |
 
 ---
 

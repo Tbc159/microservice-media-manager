@@ -72,6 +72,14 @@ class MockSourceMediaRepository:
                 return copy.deepcopy(r)
         return None
 
+    def find_by_filename(self, filename: str) -> Optional[dict]:
+        matches = [r for r in self._data if r["filename"] == filename]
+        if not matches:
+            return None
+        # piu' recente per coerenza con sqlite (created_at_s desc, id desc)
+        latest = max(matches, key=lambda r: (r["created_at_s"], r["id"]))
+        return copy.deepcopy(latest)
+
     def insert(
         self,
         *,

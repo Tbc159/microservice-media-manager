@@ -159,6 +159,22 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
 - **Target**: `make collections` (rigenera) e `make collections-check` (drift-check, eseguito anche
   in `ci.yaml`). La cartella è versionata su tutti i branch ma resta priva di host prod.
 
+## 12. Dominio `content` — generazione immagini (copertine) (2026-06-26)
+
+- **Nuovo dominio `content`** (BFF pubblico): `POST /v0/content/image` genera immagini con **Pillow**
+  e le salva come media `image/*`, restituendo gli URL su `/v0/media`. Body **polimorfico** col
+  discriminatore `tipo`: `copertina` (attivo, porting di `slide_processor.py` da `microservices-media`)
+  e `social` (schema draft → `501`). Output `image/png|jpeg|webp`.
+- **Asset per id o nome file** (`MediaRef`): logo/avatar referenziati per id media **o** filename.
+  Aggiunto a `source` l'endpoint interno `GET /v0/source/media/by-filename/{filename}`
+  (`repo.find_by_filename`, ritorna il più recente in caso di collisione).
+- **Enum `media_type` esteso** con `image/png`, `image/jpeg`, `image/webp` (upload **e** filtro list,
+  in `media` e `source`): gli asset si caricano come un media qualsiasi e sono listabili.
+- **Font Montserrat non versionati**: il renderer degrada al font di default di Pillow se assenti
+  (warning), così non blocca dev/test. In container si montano in `FONTS_DIR` (`/app/fonts`).
+- **Unità deployabile**: `docker-compose.content.yml` + `config/content/{staging,collaudo,production}.env`.
+- **Dipendenza**: `Pillow` aggiunto a `requirements.txt`. Test: +22 (unit + integration), suite a 96.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

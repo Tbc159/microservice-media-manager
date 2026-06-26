@@ -32,6 +32,12 @@ class SourceMediaRepository(Protocol):
         """Restituisce il record con quell'id, o None se assente."""
         ...
 
+    def find_by_filename(self, filename: str) -> Optional[dict]:
+        """Risolve un media per nome file. Il filename non e' univoco (l'unicita' e'
+        sull'object_key = media_type/filename): in caso di collisione tra tipi diversi
+        restituisce il piu' recente. None se nessun record corrisponde."""
+        ...
+
     def insert(
         self,
         *,

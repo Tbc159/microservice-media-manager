@@ -1,0 +1,34 @@
+# Unita' deployabile del dominio "content" (generazione immagini: copertine/social).
+# Stesso modello di docker-compose.media.yml: ingresso solo via reverse-proxy
+# (deploy/proxy), nome di servizio = dominio sulla rete 'mediamgr', nessuna porta host.
+# Deploy selettivo: la CI rideploya SOLO questo compose quando cambia il dominio content.
+services:
+  content:
+    build:
+      context: .
+      args:
+        DOMAIN: content
+    image: media-manager-content:latest
+    container_name: content
+    environment:
+      DOMAIN: content
+      PORT: 8080
+      # Iniettati dai secret dell'environment GitHub in fase di deploy (opzionali in locale)
+      API_HOST: ${API_HOST:-}
+      API_KEY: ${API_KEY:-}
+      API_SECRET: ${API_SECRET:-}
+    env_file:
+      - config/content/${APP_ENV:-staging}.env
+    # I font Montserrat NON sono versionati: per output curato montarli in FONTS_DIR
+    # (default /app/fonts). Senza volume il renderer usa il font di default di Pillow.
+    # volumes:
+    #   - ./fonts/content:/app/fonts:ro
+    expose:
+      - "8080"
+    networks:
+      - mediamgr
+    restart: unless-stopped
+
+networks:
+  mediamgr:
+    external: true

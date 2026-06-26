@@ -78,6 +78,15 @@ class SqliteSourceMediaRepository:
             ).fetchone()
         return self._row_to_record(row) if row else None
 
+    def find_by_filename(self, filename: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT {_SELECT_COLS} FROM source_media WHERE filename = ? "
+                "ORDER BY created_at_s DESC, id DESC LIMIT 1",
+                (filename,),
+            ).fetchone()
+        return self._row_to_record(row) if row else None
+
     def insert(
         self,
         *,
