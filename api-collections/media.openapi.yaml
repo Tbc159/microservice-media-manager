@@ -56,6 +56,9 @@ paths:
           - audio/m4a
           - audio/mp3
           - video/mp4
+          - image/png
+          - image/jpeg
+          - image/webp
           example: audio/m4a
       - name: title
         in: query
@@ -119,6 +122,9 @@ paths:
                   - audio/m4a
                   - audio/mp3
                   - video/mp4
+                  - image/png
+                  - image/jpeg
+                  - image/webp
                 duration_s:
                   type: integer
                   nullable: true

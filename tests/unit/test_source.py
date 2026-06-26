@@ -146,6 +146,27 @@ def test_get_item_returns_metadata_or_none(tmp_path):
     assert svc.get_item(99999) is None
 
 
+def test_get_item_by_filename_resolves_and_none(tmp_path):
+    svc = _svc_fs(tmp_path)
+    svc.create(title="Logo", media_type="image/png", filename="logo-host.png", data=b"PNGDATA")
+    item = svc.get_item_by_filename("logo-host.png")
+    assert item is not None and item["title"] == "Logo"
+    assert item["media_type"] == "image/png"
+    assert "object_key" not in item                       # interno, mai esposto
+    assert svc.get_item_by_filename("inesistente.png") is None
+
+
+def test_find_by_filename_collision_returns_latest():
+    # filename uguale sotto due media_type diversi: object_key resta univoco, ma il
+    # filename collide -> deve tornare il piu' recente (created_at_s/id maggiore).
+    repo = MockSourceMediaRepository()
+    repo.insert(title="A", filename="dup.png", media_type="image/png",
+                object_key="image/png/dup.png")
+    second = repo.insert(title="B", filename="dup.png", media_type="image/jpeg",
+                         object_key="image/jpeg/dup.png")
+    assert repo.find_by_filename("dup.png")["id"] == second
+
+
 def test_content_local_returns_target_inline_and_attachment(tmp_path):
     svc = _svc_fs(tmp_path)
     svc.create(title="D", media_type="audio/m4a", filename="d.m4a", data=b"hello")

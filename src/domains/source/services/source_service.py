@@ -47,6 +47,12 @@ class SourceService:
         record = self._repo.get(media_id)
         return self._to_dto(record) if record is not None else None
 
+    def get_item_by_filename(self, filename: str) -> Optional[dict]:
+        """Metadati del media risolto per nome file, o None se nessuno corrisponde.
+        Usato dai consumer interni (es. dominio content) per referenziare asset per nome."""
+        record = self._repo.find_by_filename(filename)
+        return self._to_dto(record) if record is not None else None
+
     def query(
         self,
         media_type: str,

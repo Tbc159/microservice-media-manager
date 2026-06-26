@@ -45,7 +45,7 @@ paths:
           description: MIME type dei contenuti da recuperare
           schema:
             type: string
-            enum: [audio/m4a, audio/mp3, video/mp4]
+            enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp]
             example: audio/m4a
         - name: title
           in: query
@@ -133,7 +133,7 @@ paths:
                   example: "Nuova puntata"
                 media_type:
                   type: string
-                  enum: [audio/m4a, audio/mp3, video/mp4]
+                  enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp]
                   example: audio/m4a
                 duration_s:
                   type: integer
@@ -186,6 +186,35 @@ paths:
                 $ref: '#/components/schemas/SourceMediaItem'
         '404':
           description: Media non trovato (nessun corpo)
+
+  /source/media/by-filename/{filename}:
+    get:
+      operationId: resolve_source_media_by_filename
+      tags: [source]
+      summary: Risolve i metadati di un media per nome file (uso interno)
+      description: |
+        Endpoint interno: i consumer (es. dominio `content`) referenziano gli asset per
+        **nome file** oltre che per id. Il filename non e' univoco (l'unicita' e' su
+        `media_type/filename`): in caso di collisione restituisce il record piu' recente.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          description: Nome del file da risolvere (es. logo-host.png)
+          schema:
+            type: string
+            example: logo-host.png
+      responses:
+        '200':
+          description: Metadati del media risolto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceMediaItem'
+        '404':
+          description: Nessun media con quel nome file (nessun corpo)
 
   /source/media/{id}/content:
     get:

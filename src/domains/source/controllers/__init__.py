@@ -9,6 +9,7 @@ from .source_controller import (
     get_source_media,
     get_source_media_content,
     query_source_media,
+    resolve_source_media_by_filename,
     upload_source_media,
 )
 
@@ -16,6 +17,7 @@ __all__ = [
     "get_health",
     "query_source_media",
     "get_source_media",
+    "resolve_source_media_by_filename",
     "upload_source_media",
     "get_source_media_content",
 ]

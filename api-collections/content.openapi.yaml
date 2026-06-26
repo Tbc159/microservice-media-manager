@@ -1,0 +1,275 @@
+# GENERATO da tools/build_collections.py - NON editare a mano.
+# Fonte di verita': openapi/<dominio>/api.yaml. Rigenera con `make collections`.
+openapi: 3.0.3
+info:
+  title: Content API
+  version: 0.1.0
+  description: 'Dominio "content": **BFF pubblico** per la *generazione di immagini* (copertine, social)
+
+    a partire da asset gia'' caricati su /v0/media. Il campo `tipo` nel body seleziona il
+
+    generatore. Gli asset (logo, ospiti) sono referenziati per **id media** (quelli restituiti
+
+    da POST /media) e risolti via source sulla rete interna. L''immagine prodotta viene salvata
+
+    come media `image/*` e se ne restituiscono gli URL per recuperarla (su /v0/media).
+
+    base_path /v0 e'' applicato da src/app.py.
+
+    '
+servers:
+- url: http://mediamanager-dev.duckdns.org/v0
+  description: 'dev (staging) - reverse-proxy esterno duckdns. Usa http: l''https ha cert self-signed.'
+- url: https://{coll_host}/v0
+  description: coll (collaudo) - imposta coll_host (host pubblico dell'ambiente di collaudo).
+  variables:
+    coll_host:
+      default: REPLACE_WITH_COLL_HOST
+      description: Host pubblico dell'ambiente collaudo (vive nei secret, non versionato).
+paths:
+  /content/health:
+    get:
+      operationId: get_health
+      tags:
+      - content
+      summary: Health check del dominio content
+      responses:
+        '200':
+          description: Servizio attivo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: ok
+  /content/image:
+    post:
+      operationId: generate_image
+      tags:
+      - content
+      summary: Genera un'immagine e la salva come media
+      description: "Il campo `tipo` seleziona il generatore:\n- `copertina` — attivo: immagine 2560x1440\
+        \ con logo host, titolo, testo centrale e\n  fino a 5 avatar ospiti. Gli asset sono referenziati\
+        \ per id media (POST /media).\n- `social` — non ancora implementato: risponde **501**.\n\nL'immagine\
+        \ generata e' salvata come media `image/*`; la risposta contiene gli URL\n(`content_url`/`download_url`)\
+        \ su /v0/media per recuperarla.\n"
+      security:
+      - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageRequest'
+      responses:
+        '201':
+          description: Immagine generata e salvata come media
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeneratedImage'
+        '400':
+          description: Parametri non validi, oppure asset (logo/ospite) non trovato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '501':
+          description: Tipo immagine non ancora implementato (es. `social`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+    ImageRequest:
+      description: 'Richiesta polimorfica: il campo `tipo` discrimina il generatore.
+
+        '
+      oneOf:
+      - $ref: '#/components/schemas/CopertinaRequest'
+      - $ref: '#/components/schemas/SocialRequest'
+      discriminator:
+        propertyName: tipo
+        mapping:
+          copertina: '#/components/schemas/CopertinaRequest'
+          social: '#/components/schemas/SocialRequest'
+    MediaRef:
+      description: 'Riferimento a un media gia'' caricato (via POST /media): l''**id** intero del record
+
+        oppure il **nome file** (stringa). La risoluzione prova prima l''id, poi il filename.
+
+        '
+      oneOf:
+      - type: integer
+      - type: string
+      example: 12
+    CopertinaRequest:
+      type: object
+      required:
+      - tipo
+      - titolo
+      - testo_centrale
+      - logo_host
+      properties:
+        tipo:
+          type: string
+          enum:
+          - copertina
+          description: Discriminatore del tipo di immagine.
+        titolo:
+          type: string
+          description: Titolo in alto a fianco del logo (puo' contenere \n per piu' righe).
+          example: Bitcoin Radio
+        testo_centrale:
+          type: string
+          description: Testo centrale (puo' contenere \n per piu' righe).
+          example: è lieto di ospitare
+        logo_host:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: Logo host (id media o nome file). Deve essere un'immagine.
+        ospiti:
+          type: array
+          maxItems: 5
+          default: []
+          description: Avatar ospiti (max 5), per id media o nome file. Mancanti -> placeholder.
+          items:
+            $ref: '#/components/schemas/MediaRef'
+          example:
+          - 21
+          - 22
+        colore_sfondo:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#ff751f'
+          example: '#ff751f'
+        tipo_sfondo:
+          type: string
+          enum:
+          - unicolor
+          - sfumato-up
+          - sfumato-down
+          default: unicolor
+        colore_sfumato:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          nullable: true
+          description: Obbligatorio se `tipo_sfondo` != `unicolor`.
+        formato:
+          type: string
+          enum:
+          - image/png
+          - image/jpeg
+          - image/webp
+          default: image/png
+          description: Formato dell'immagine generata.
+    SocialRequest:
+      type: object
+      description: 'Generatore `social` (immagine quadrata 1080x1080) — schema **draft**: i campi sono
+
+        gia'' definiti, ma il generatore non e'' ancora implementato (runtime -> **501**).
+
+        Mostra come un `tipo` diverso usi un set di campi diverso da `copertina`.
+
+        '
+      required:
+      - tipo
+      - logo_top
+      - logo_bottom
+      properties:
+        tipo:
+          type: string
+          enum:
+          - social
+          description: Discriminatore del tipo di immagine.
+        logo_top:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: Logo superiore (id media o nome file).
+        logo_bottom:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: Logo inferiore, ritagliato a cerchio (id media o nome file).
+        testo:
+          type: string
+          default: è lieto di ospitare
+          description: Testo centrale (reso in maiuscolo).
+        testo_bottom:
+          type: string
+          nullable: true
+          description: Testo inferiore opzionale.
+        colore_sfondo:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#ff751f'
+        colore_testo:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#ffffff'
+        formato:
+          type: string
+          enum:
+          - image/png
+          - image/jpeg
+          - image/webp
+          default: image/png
+          description: Formato dell'immagine generata.
+    GeneratedImage:
+      type: object
+      description: Esito della generazione; gli URL puntano a /v0/media per il recupero.
+      required:
+      - id
+      - tipo
+      - media_type
+      - created_at_s
+      - content_url
+      - download_url
+      properties:
+        id:
+          type: integer
+          description: id media dell'immagine salvata (recuperabile su /v0/media).
+          example: 101
+        tipo:
+          type: string
+          enum:
+          - copertina
+          - social
+          example: copertina
+        media_type:
+          type: string
+          enum:
+          - image/png
+          - image/jpeg
+          - image/webp
+          example: image/png
+        size_bytes:
+          type: integer
+          nullable: true
+          example: 482344
+        created_at_s:
+          type: integer
+          example: 1700000000
+        content_url:
+          type: string
+          description: URL (relativo) dei byte inline.
+          example: /v0/media/101/content
+        download_url:
+          type: string
+          description: URL (relativo) dei byte come allegato.
+          example: /v0/media/101/content?download=1
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string
+    Health:
+      type: object
+      properties:
+        status:
+          type: string

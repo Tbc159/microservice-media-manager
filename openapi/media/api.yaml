@@ -41,7 +41,7 @@ paths:
           description: MIME type dei contenuti
           schema:
             type: string
-            enum: [audio/m4a, audio/mp3, video/mp4]
+            enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp]
             example: audio/m4a
         - name: title
           in: query
@@ -97,7 +97,7 @@ paths:
                   type: string
                 media_type:
                   type: string
-                  enum: [audio/m4a, audio/mp3, video/mp4]
+                  enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp]
                 duration_s:
                   type: integer
                   nullable: true

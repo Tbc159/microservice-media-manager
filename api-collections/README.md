@@ -16,6 +16,7 @@ dell'import diretto di `api.yaml`:
 | File | Dominio | Esposizione |
 |------|---------|-------------|
 | `media.openapi.yaml` | `media` | **pubblico** (reverse-proxy): server dev + coll |
+| `content.openapi.yaml` | `content` | **pubblico** (reverse-proxy): generazione immagini |
 | `source.openapi.yaml` | `source` | **interno** (`.internal`): server rete docker / port-forward |
 
 > Niente host di **produzione**: i bundle contengono solo gli ambienti **dev** e **coll**.
@@ -48,6 +49,30 @@ Endpoint che ottieni (dominio `media`):
 - `POST /media` — upload multipart
 - `GET  /media/health` — health
 
+Endpoint del dominio `content` (generazione immagini, `content.openapi.yaml`):
+
+- `POST /content/image` — genera un'immagine e la salva come media (risposta con `content_url`)
+- `GET  /content/health` — health
+
+**Esempio body (`tipo: copertina`)** — `logo_host`/`ospiti` accettano id media **o** nome file
+(carica prima gli asset con `POST /media`, `media_type=image/png`):
+
+```json
+{
+  "tipo": "copertina",
+  "titolo": "Bitcoin Radio",
+  "testo_centrale": "è lieto di ospitare",
+  "logo_host": "logo-host.png",
+  "ospiti": [21, 22],
+  "colore_sfondo": "#ff751f",
+  "tipo_sfondo": "unicolor",
+  "formato": "image/png"
+}
+```
+
+> La risposta `201` contiene `content_url` (es. `/v0/media/101/content`): l'immagine generata si
+> recupera dal dominio **`media`**. `tipo: social` è previsto dallo schema ma risponde `501`.
+
 > **`source` è interno**: `source.openapi.yaml` è incluso per completezza ma NON è
 > raggiungibile dall'esterno. Lo si prova solo dentro la rete docker `mediamgr` o via
-> port-forward locale verso il container `source`. Il contratto pubblico è solo `media`.
+> port-forward locale verso il container `source`. Il contratto pubblico è `media` e `content`.
