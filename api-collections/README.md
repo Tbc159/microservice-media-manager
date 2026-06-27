@@ -36,6 +36,7 @@ progetto (un `openapi/<dom>/api.yaml` = un dominio; il marker `.internal` lo ren
 ## Import in Bruno (o altri tool)
 
 1. **Import Collection → OpenAPI V3** e scegli `media.openapi.yaml`.
+   * 1.1 **Bruno** Selezionare "*FileFormat = OpenCollection (YAML)*" e "*Folder arrangement = Tag*". 
 2. Seleziona il **server**: `dev` (default, `http://mediamanager-dev.duckdns.org/v0`)
    oppure `coll` (imposta la variabile `coll_host` con l'host di collaudo).
 3. Imposta l'**auth**: header `X-API-Key`. In dev va bene qualunque valore non vuoto
