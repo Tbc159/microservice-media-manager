@@ -11,7 +11,7 @@ from PIL import Image
 
 from src.domains.content.errors import AssetNotFound, TipoNonImplementato
 from src.domains.content.gateway import UploadResult
-from src.domains.content.services import copertina_renderer
+from src.domains.content.services import copertina_renderer, layer_compositor
 from src.domains.content.services.image_service import ImageService
 
 
@@ -72,7 +72,7 @@ def _svc():
     ("image/webp", "WEBP"),
 ])
 def test_renderer_produces_valid_image(formato, expected):
-    raw = copertina_renderer.render_copertina(
+    raw, warnings = copertina_renderer.render_copertina(
         titolo="Bitcoin Radio",
         testo_centrale="è lieto di ospitare",
         colore_sfondo="#ff751f",
@@ -85,15 +85,27 @@ def test_renderer_produces_valid_image(formato, expected):
     img = Image.open(io.BytesIO(raw))
     assert img.format == expected
     assert img.size == (2560, 1440)
+    assert isinstance(warnings, list)
 
 
 def test_renderer_gradient_background():
-    raw = copertina_renderer.render_copertina(
+    raw, _ = copertina_renderer.render_copertina(
         titolo="X", testo_centrale="Y",
         colore_sfondo="#000000", tipo_sfondo="sfumato-up", colore_sfumato="#ffffff",
         logo_bytes=_LOGO, ospiti_bytes=[], formato="image/png",
     )
     assert Image.open(io.BytesIO(raw)).size == (2560, 1440)
+
+
+def test_renderer_invalid_custom_font_warns():
+    # byte che non sono un font -> fallback + warning per quel ruolo, immagine valida
+    raw, warnings = copertina_renderer.render_copertina(
+        titolo="X", testo_centrale="Y", colore_sfondo="#000000", tipo_sfondo="unicolor",
+        colore_sfumato=None, logo_bytes=_LOGO, ospiti_bytes=[], formato="image/png",
+        font_titolo_bytes=b"not-a-font",
+    )
+    assert Image.open(io.BytesIO(raw)).size == (2560, 1440)
+    assert any("titolo" in w for w in warnings)
 
 
 def test_ext_for():
@@ -115,6 +127,28 @@ def test_copertina_by_id_ok_and_remaps_url():
     assert item["download_url"] == "/v0/media/99/content?download=1"
     assert gw.uploaded[0]["media_type"] == "image/png"
     assert gw.uploaded[0]["filename"].startswith("copertina-")
+    assert isinstance(item["warnings"], list)
+
+
+def test_font_not_found_emits_warning_and_201():
+    # font richiesto per id inesistente -> warning + immagine comunque salvata (201 soft)
+    item = _svc().generate(
+        {"tipo": "copertina", "titolo": "B", "testo_centrale": "c",
+         "logo_host": 10, "font_titolo": 999}
+    )
+    assert item["id"] == 99
+    assert any("999" in w for w in item["warnings"])
+
+
+def test_font_by_filename_resolved_but_invalid_bytes_warns_from_renderer():
+    # font_titolo='logo.png' risolve (id 50) ma i byte non sono un font -> warning del renderer,
+    # non un 'non trovato' del service
+    item = _svc().generate(
+        {"tipo": "copertina", "titolo": "B", "testo_centrale": "c",
+         "logo_host": 10, "font_titolo": "logo.png"}
+    )
+    assert any("titolo" in w for w in item["warnings"])
+    assert not any("non trovato" in w and "logo.png" in w for w in item["warnings"])
 
 
 def test_copertina_format_webp_propagated():
@@ -183,3 +217,105 @@ def test_health():
 
     body, status = get_health()
     assert status == 200 and body["status"] == "ok"
+
+
+# ── composita: compositor (Pillow puro) ────────────────────────────────────────
+
+def test_resolve_axis_keyword_percent_pixel():
+    ra = layer_compositor._resolve_axis
+    X = layer_compositor._X_KEYWORDS
+    assert ra("left", 100, 1000, X) == 0
+    assert ra("right", 100, 1000, X) == 900
+    assert ra("center", 100, 1000, X) == 450
+    assert ra("50%", 100, 1000, X) == 450
+    assert ra("100px", 100, 1000, X) == 100
+    assert ra("250", 100, 1000, X) == 250
+    assert ra(None, 100, 1000, X) == 450          # default center
+
+
+def test_resolve_size_preserves_aspect():
+    rs = layer_compositor._resolve_size
+    assert rs({"width": "50%"}, (200, 100)) == (960, 480)   # 50% di 1920, h in proporzione
+    assert rs({"height": "100%"}, (200, 100)) == (2160, 1080)
+    # nessuna dimensione + immagine enorme -> clamp nella canvas, mai upscale
+    w, h = rs(None, (4000, 4000))
+    assert (w, h) == (1080, 1080)
+
+
+def test_compositor_color_background_and_text():
+    raw, warnings = layer_compositor.render_composita([
+        {"type": "background", "fallback_color": "#ff0000", "image_bytes": None},
+        {"type": "text", "content": "HELLO", "x": "center", "y": "center",
+         "font_size": 90, "color": "#ffffff"},
+    ])
+    img = Image.open(io.BytesIO(raw))
+    assert img.size == (1920, 1080)
+    assert isinstance(warnings, list)
+
+
+def test_compositor_full_stack():
+    raw, _ = layer_compositor.render_composita([
+        {"type": "background", "image_bytes": _LOGO, "fit": "cover"},
+        {"type": "person", "image_bytes": _AVATAR, "x": "right", "y": "bottom",
+         "size": {"height": "50%"}},
+        {"type": "image", "image_bytes": _LOGO, "x": "10%", "y": "top",
+         "size": {"width": "120px"}, "opacity": 0.8},
+        {"type": "text", "content": "RASSEGNA\nSTAMPA", "x": "left", "y": "12%",
+         "font_size": 130, "color": "#ff751f", "stroke": {"width": 6, "color": "#000000"}},
+        {"type": "text", "content": "BOX", "x": "70%", "y": "60%", "font_size": 48,
+         "color": "#000000", "box": {"color": "#ffd200", "radius": 18, "padding": 16}},
+    ], formato="image/jpeg")
+    img = Image.open(io.BytesIO(raw))
+    assert img.format == "JPEG"
+    assert img.size == (1920, 1080)
+
+
+# ── composita: service ──────────────────────────────────────────────────────────
+
+def test_composita_service_ok():
+    gw = _FakeGateway()
+    item = ImageService(gw).generate({
+        "tipo": "composita",
+        "layers": [
+            {"type": "background", "media": 10, "fit": "cover"},
+            {"type": "person", "media": 21, "x": "right", "y": "bottom",
+             "size": {"height": "80%"}},
+            {"type": "text", "content": "TITLE", "x": "left", "y": "top", "font_size": 120},
+        ],
+    })
+    assert item["id"] == 99 and item["tipo"] == "composita"
+    assert item["content_url"] == "/v0/media/99/content"
+    assert gw.uploaded[0]["media_type"] == "image/png"
+    assert gw.uploaded[0]["filename"].startswith("composita-")
+
+
+def test_composita_missing_person_skipped_with_warning():
+    item = _svc().generate({
+        "tipo": "composita",
+        "layers": [
+            {"type": "background", "fallback_color": "#000000"},
+            {"type": "person", "media": 404},                 # assente, non required -> skip
+        ],
+    })
+    assert item["id"] == 99
+    assert any("404" in w for w in item["warnings"])
+
+
+def test_composita_missing_required_person_raises():
+    with pytest.raises(AssetNotFound):
+        _svc().generate({
+            "tipo": "composita",
+            "layers": [
+                {"type": "background", "fallback_color": "#000000"},
+                {"type": "person", "media": 404, "required": True},
+            ],
+        })
+
+
+def test_composita_missing_background_falls_back_with_warning():
+    item = _svc().generate({
+        "tipo": "composita",
+        "layers": [{"type": "background", "media": 404}],
+    })
+    assert item["id"] == 99
+    assert any("sfondo" in w and "404" in w for w in item["warnings"])

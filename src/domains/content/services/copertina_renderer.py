@@ -68,11 +68,26 @@ def _make_background(tipo: str, colore_sfondo: str, colore_sfumato: Optional[str
     return img
 
 
-def _load_font(name: str, size: int) -> ImageFont.FreeTypeFont:
+def _resolve_font(
+    custom_bytes: Optional[bytes],
+    default_name: str,
+    size: int,
+    role: str,
+    warnings: List[str],
+):
+    """Risolve il font per un ruolo. Priorità: font personalizzato (byte) → Montserrat bundle
+    → default Pillow. Ogni fallback aggiunge un warning non bloccante (e logga)."""
+    if custom_bytes is not None:
+        try:
+            return ImageFont.truetype(io.BytesIO(custom_bytes), size)
+        except OSError:
+            warnings.append(f"font per il {role} non valido: usato il font predefinito")
+            logger.warning("Font personalizzato per %s non valido: fallback", role)
     try:
-        return ImageFont.truetype(os.path.join(FONTS_DIR, name), size)
+        return ImageFont.truetype(os.path.join(FONTS_DIR, default_name), size)
     except OSError:
-        logger.warning("Font %s non trovato in %s: uso il default Pillow", name, FONTS_DIR)
+        warnings.append(f"font '{default_name}' ({role}) non trovato: usato il default Pillow")
+        logger.warning("Font %s non trovato in %s: default Pillow", default_name, FONTS_DIR)
         return ImageFont.load_default(size)
 
 
@@ -111,12 +126,17 @@ def render_copertina(
     logo_bytes: bytes,
     ospiti_bytes: List[Optional[bytes]],
     formato: str = "image/png",
-) -> bytes:
-    """Genera la copertina e la restituisce come byte nel formato richiesto.
+    font_titolo_bytes: Optional[bytes] = None,
+    font_testo_bytes: Optional[bytes] = None,
+) -> "tuple[bytes, List[str]]":
+    """Genera la copertina; restituisce (byte_immagine, warnings).
 
     `logo_bytes` e' obbligatorio (gia' recuperato dal chiamante). Ogni elemento di
-    `ospiti_bytes` puo' essere None -> avatar placeholder.
+    `ospiti_bytes` puo' essere None -> avatar placeholder. `font_titolo_bytes`/`font_testo_bytes`
+    sono i font personalizzati (byte) o None -> Montserrat bundle. I fallback finiscono in
+    `warnings` (la generazione non fallisce mai per un font).
     """
+    warnings: List[str] = []
     img = _make_background(tipo_sfondo, colore_sfondo, colore_sfumato)
     draw = ImageDraw.Draw(img)
 
@@ -126,7 +146,7 @@ def render_copertina(
     img.paste(logo, (MARGIN, LOGO_TOP_Y), logo)
     max_guest_px = round(logo.width * 1.05)
 
-    font_brand = _load_font(FONT_EXTRABOLD, FONT_BRAND_SIZE)
+    font_brand = _resolve_font(font_titolo_bytes, FONT_EXTRABOLD, FONT_BRAND_SIZE, "titolo", warnings)
     brand_lines = [ln.strip() for ln in titolo.split("\n")]
     line_h = draw.textbbox((0, 0), "A", font=font_brand)[3] + round(8 * SCALE)
     brand_h = len(brand_lines) * line_h
@@ -137,7 +157,7 @@ def render_copertina(
 
     # Testo centrale
     header_bottom = LOGO_TOP_Y + max(logo.height, brand_h) + round(60 * SCALE)
-    font_testo = _load_font(FONT_LIGHT, FONT_TESTO_SIZE)
+    font_testo = _resolve_font(font_testo_bytes, FONT_LIGHT, FONT_TESTO_SIZE, "testo", warnings)
     testo_lines = [ln.strip() for ln in testo_centrale.split("\n")]
     tline_h = draw.textbbox((0, 0), "A", font=font_testo)[3] + round(16 * SCALE)
 
@@ -175,6 +195,6 @@ def render_copertina(
     out = img if pil_format != "JPEG" else img.convert("RGB")
     buf = io.BytesIO()
     out.save(buf, pil_format, **save_kwargs)
-    logger.info("Copertina generata: %sx%s, sfondo=%s, ospiti=%s, formato=%s",
-                W, H, tipo_sfondo, len(ospiti_bytes), formato)
-    return buf.getvalue()
+    logger.info("Copertina generata: %sx%s, sfondo=%s, ospiti=%s, formato=%s, warnings=%s",
+                W, H, tipo_sfondo, len(ospiti_bytes), formato, len(warnings))
+    return buf.getvalue(), warnings

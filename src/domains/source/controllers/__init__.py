@@ -11,6 +11,7 @@ from .source_controller import (
     query_source_media,
     resolve_source_media_by_filename,
     upload_source_media,
+    upload_source_media_from_url,
 )
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "get_source_media",
     "resolve_source_media_by_filename",
     "upload_source_media",
+    "upload_source_media_from_url",
     "get_source_media_content",
 ]

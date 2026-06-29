@@ -147,6 +147,45 @@ def test_upload_requires_api_key(client):
     assert r.status_code == 401
 
 
+# --- POST /v0/source/media/from-url (upload interno via URL) ---
+
+
+def test_upload_from_url_201(client, monkeypatch):
+    import src.domains.source.controllers.source_controller as sc
+
+    monkeypatch.setattr(sc, "download_asset", lambda url, **kw: b"FONTBYTES")
+    r = client.post(
+        "/v0/source/media/from-url",
+        json={"url": "https://x/MioFont.ttf", "title": "Mio Font", "media_type": "font/ttf"},
+        headers=_KEY,
+    )
+    assert r.status_code == 201
+    b = r.json()
+    assert b["filename"] == "MioFont.ttf"          # dedotto dall'URL
+    assert b["media_type"] == "font/ttf"
+    assert "object_key" not in b
+
+
+def test_upload_from_url_requires_api_key(client):
+    r = client.post(
+        "/v0/source/media/from-url",
+        json={"url": "https://x/f.ttf", "title": "T", "media_type": "font/ttf"},
+    )
+    assert r.status_code == 401
+
+
+def test_upload_from_url_invalid_media_type_400(client, monkeypatch):
+    import src.domains.source.controllers.source_controller as sc
+
+    monkeypatch.setattr(sc, "download_asset", lambda url, **kw: b"x")
+    r = client.post(
+        "/v0/source/media/from-url",
+        json={"url": "https://x/f.bin", "title": "T", "media_type": "application/pdf"},
+        headers=_KEY,
+    )
+    assert r.status_code == 400
+
+
 # --- GET /v0/source/media/{id}/content (play inline / download) ---
 
 

@@ -4,9 +4,12 @@ Il service viene assemblato dal factory (composition root), che sceglie reposito
 storage backend in base all'ambiente. Il controller non conosce le implementazioni.
 """
 from typing import Optional
+from urllib.parse import urlparse
 
 import flask
 
+from src.domains.source.downloader import DownloadError
+from src.domains.source.downloader import download as download_asset
 from src.domains.source.factory import build_source_service
 from src.domains.source.repositories.base import DuplicateObjectKeyError
 
@@ -57,6 +60,37 @@ def upload_source_media(body: dict, file) -> tuple[dict, int]:
             media_type=body["media_type"],
             filename=filename,
             data=file.read(),
+            duration_s=body.get("duration_s"),
+        )
+    except DuplicateObjectKeyError:
+        return {"detail": f"media gia' presente: {body['media_type']}/{filename}"}, 409
+    return item, 201
+
+
+def _filename_from_url(url: str) -> str:
+    path = urlparse(url).path
+    return path.rsplit("/", 1)[-1] if path else ""
+
+
+def upload_source_media_from_url(body: dict) -> tuple[dict, int]:
+    """Upload interno via URL: scarica il contenuto e lo salva come gli altri media.
+
+    Pensato per il provisioning di asset dalla rete interna (in particolare font).
+    Download fallito/oversize -> 502; object_key duplicato -> 409.
+    """
+    filename = (body.get("filename") or "").strip() or _filename_from_url(body["url"])
+    if not filename:
+        return {"detail": "filename non deducibile dall'URL: specificarlo nel body"}, 400
+    try:
+        data = download_asset(body["url"])
+    except DownloadError as exc:
+        return {"detail": f"download fallito: {exc}"}, 502
+    try:
+        item = _service.create(
+            title=body["title"],
+            media_type=body["media_type"],
+            filename=filename,
+            data=data,
             duration_s=body.get("duration_s"),
         )
     except DuplicateObjectKeyError:

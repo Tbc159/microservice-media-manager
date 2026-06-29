@@ -167,6 +167,70 @@ def test_find_by_filename_collision_returns_latest():
     assert repo.find_by_filename("dup.png")["id"] == second
 
 
+def test_downloader_returns_bytes():
+    import httpx
+
+    from src.domains.source import downloader
+
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, content=b"FONT"))
+    client = httpx.Client(transport=transport)
+    assert downloader.download("https://x/f.ttf", client=client) == b"FONT"
+
+
+def test_downloader_caps_size():
+    import httpx
+
+    from src.domains.source import downloader
+    from src.domains.source.downloader import DownloadError
+
+    big = b"x" * 1000
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, content=big))
+    client = httpx.Client(transport=transport)
+    with pytest.raises(DownloadError):
+        downloader.download("https://x/big.ttf", max_bytes=100, client=client)
+
+
+def test_upload_from_url_downloads_and_creates(tmp_path, monkeypatch):
+    from src.domains.source.controllers import source_controller as sc
+
+    svc = SourceService(
+        repo=MockSourceMediaRepository(), storage=LocalStorageBackend(media_dir=str(tmp_path))
+    )
+    monkeypatch.setattr(sc, "_service", svc)
+    monkeypatch.setattr(sc, "download_asset", lambda url, **kw: b"FONTDATA")
+    item, status = sc.upload_source_media_from_url(
+        {"url": "https://x/MioFont.ttf", "title": "Mio Font", "media_type": "font/ttf"}
+    )
+    assert status == 201
+    assert item["filename"] == "MioFont.ttf"          # dedotto dall'URL
+    assert item["media_type"] == "font/ttf"
+    assert (tmp_path / "font/ttf/MioFont.ttf").read_bytes() == b"FONTDATA"
+
+
+def test_upload_from_url_download_failure_502(monkeypatch):
+    from src.domains.source.controllers import source_controller as sc
+    from src.domains.source.downloader import DownloadError
+
+    def boom(url, **kw):
+        raise DownloadError("oversize")
+
+    monkeypatch.setattr(sc, "download_asset", boom)
+    _, status = sc.upload_source_media_from_url(
+        {"url": "https://x/big.ttf", "title": "T", "media_type": "font/ttf"}
+    )
+    assert status == 502
+
+
+def test_upload_from_url_no_filename_deducible_400(monkeypatch):
+    from src.domains.source.controllers import source_controller as sc
+
+    monkeypatch.setattr(sc, "download_asset", lambda url, **kw: b"x")
+    _, status = sc.upload_source_media_from_url(
+        {"url": "https://example.org", "title": "T", "media_type": "font/ttf"}
+    )
+    assert status == 400
+
+
 def test_content_local_returns_target_inline_and_attachment(tmp_path):
     svc = _svc_fs(tmp_path)
     svc.create(title="D", media_type="audio/m4a", filename="d.m4a", data=b"hello")

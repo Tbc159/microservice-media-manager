@@ -101,6 +101,35 @@ def test_missing_logo_is_400(client):
     assert r.status_code == 400
 
 
+def test_generate_composita_201(client):
+    # solo colore + testo: nessun asset da risolvere -> robusto e deterministico
+    r = client.post(
+        "/v0/content/image",
+        json={
+            "tipo": "composita",
+            "layers": [
+                {"type": "background", "fallback_color": "#222222"},
+                {"type": "text", "content": "CIAO", "x": "center", "y": "center", "font_size": 100},
+            ],
+        },
+        headers=_KEY,
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["tipo"] == "composita"
+    assert body["content_url"] == "/v0/media/99/content"
+    assert isinstance(body["warnings"], list)
+
+
+def test_composita_invalid_layer_type_400(client):
+    r = client.post(
+        "/v0/content/image",
+        json={"tipo": "composita", "layers": [{"type": "banana"}]},
+        headers=_KEY,
+    )
+    assert r.status_code == 400
+
+
 def test_social_is_501(client):
     r = client.post(
         "/v0/content/image",
