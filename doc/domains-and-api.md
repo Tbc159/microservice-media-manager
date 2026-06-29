@@ -57,7 +57,7 @@ Query parameter:
 
 | Param | Obblig. | Tipo | Default | Note |
 |-------|---------|------|---------|------|
-| `type` | sì | enum | — | `audio/m4a` \| `audio/mp3` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` |
+| `type` | sì | enum | — | `audio/m4a` \| `audio/mp3` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` \| `font/ttf` \| `font/otf` |
 | `title` | no | string | — | match **esatto**; omesso → tutti i record del tipo |
 | `page` | no | int ≥1 | 1 | pagina (1-based) |
 | `page_size` | no | int 1..100 | 20 | risultati per pagina |
@@ -94,12 +94,14 @@ Request `multipart/form-data`:
 |-------|---------|------|------|
 | `file` | sì | binary | contenuto del media (il nome file diventa parte dell'`object_key`) |
 | `title` | sì | string | titolo |
-| `media_type` | sì | enum | `audio/m4a` \| `audio/mp3` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` |
+| `media_type` | sì | enum | `audio/m4a` \| `audio/mp3` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` \| `font/ttf` \| `font/otf` |
 | `duration_s` | no | integer | durata in secondi |
 
 > Gli `image/*` sono stati aggiunti per gli **asset** (logo, avatar) usati dal dominio
-> `content` per generare le immagini: si caricano come un media qualsiasi e si referenziano
-> poi per id o nome file.
+> `content`; i `font/*` per i **font personalizzati**. Si caricano come un media qualsiasi e
+> si referenziano poi per id o nome file. **Nota**: i font si caricano **solo internamente**
+> (questo upload multipart su `source`, oppure `POST /source/media/from-url`); non esiste un
+> upload pubblico di font su `media`.
 
 Risposte: `201` → `SourceMediaItem` (con `content_url`/`download_url`); `400` campi mancanti /
 `media_type` fuori enum; `409` media già presente (stesso `media_type`/`filename` → `object_key`
@@ -114,6 +116,30 @@ su MinIO/S3 in coll/prod). In più, per non far transitare i byte dall'API, è p
 pre-signed: `SourceService.presigned_upload_url()` restituisce un URL PUT firmato dallo storage
 (`None` con storage locale/dev). Attivazione futura come endpoint dedicato (`POST` che crea un
 record `processing` + URL, poi conferma).
+
+### `POST /v0/source/media/from-url`
+Variante **interna** dell'upload: invece del file multipart, il server **scarica** il contenuto da
+un URL e lo salva come gli altri media. Protetto (`X-API-Key`). Pensato per il provisioning di asset
+dalla rete interna — in particolare i **font personalizzati** (l'upload pubblico di font non esiste).
+
+Request `application/json`:
+
+| Campo | Obblig. | Tipo | Note |
+|-------|---------|------|------|
+| `url` | sì | string (uri) | URL da cui scaricare il contenuto |
+| `title` | sì | string | titolo |
+| `media_type` | sì | enum | stesso enum dell'upload (incl. `font/ttf`/`font/otf`) |
+| `filename` | no | string | nome file per l'`object_key`; se omesso, **dedotto dall'URL** |
+| `duration_s` | no | integer | durata in secondi |
+
+Risposte: `201` → `SourceMediaItem`; `400` campi mancanti / `media_type` fuori enum / filename non
+deducibile; `409` `object_key` duplicato; **`502`** download fallito (URL irraggiungibile, errore
+remoto o oltre il cap); `401` senza chiave.
+
+> **Sicurezza leggera** (il dominio è già interno, `.internal`): il download
+> (`src/domains/source/downloader.py`) ha **timeout** e **dimensione massima ~50 MB** (streaming con
+> abort), ma **nessun** vincolo di scheme o blocco IP. Il controller scarica i byte e riusa lo stesso
+> `SourceService.create()` dell'upload multipart (stesso ordine metadati→byte, stessi 409).
 
 ### `GET /v0/source/media/{id}`
 Metadati del **singolo** record (il listing è su `GET /v0/source/media`). Protetto (`X-API-Key`).
@@ -240,6 +266,7 @@ media sono scaricabili via `/content`. Utile per validare la catena dopo un depl
 | Storage byte | ✅ local (dev), MinIO (coll/prod) | S3/R2 (solo cambio env) |
 | `content_url`/`download_url` | ✅ link verso `/content` (inline/attachment) | — |
 | Upload server-side | ✅ `POST /v0/source/media` (multipart) | — |
+| Upload interno via URL | ✅ `POST /v0/source/media/from-url` (download timeout + cap 50 MB) | allowlist host in coll/prod se serve |
 | Upload pre-signed (browser→storage) | predisposto (`presigned_upload_url` + `get_upload_url`) | endpoint dedicato in coll/prod |
 | Byte `GET /v0/source/media/{id}/content` | ✅ inline/`?download=1`, 302 in coll/prod, streaming+Range in dev | — |
 | Dominio `media` come BFF pubblico | ✅ `media` espone, `source` interno (`.internal`); download via 302 passthrough (relay solo in dev) | arricchimento metadati business |
@@ -266,18 +293,27 @@ campo `tipo` (discriminatore) seleziona il generatore e **quali campi** sono amm
 
 | `tipo` | Stato | Campi propri |
 |--------|-------|--------------|
-| `copertina` | ✅ attivo | `titolo`*, `testo_centrale`*, `logo_host`*, `ospiti[≤5]`, `colore_sfondo`, `tipo_sfondo` (`unicolor`\|`sfumato-up`\|`sfumato-down`), `colore_sfumato`, `formato` |
+| `copertina` | ✅ attivo | template fisso "21milioni di chiacchiere": `titolo`*, `testo_centrale`*, `logo_host`*, `ospiti[≤5]`, `colore_sfondo`, `tipo_sfondo` (`unicolor`\|`sfumato-up`\|`sfumato-down`), `colore_sfumato`, `formato`, `font_titolo`, `font_testo` |
+| `composita` | ✅ attivo | **motore a layer** (1920×1080): `layers[]`* (vedi sotto), `formato` |
 | `social` | 🚧 draft → `501` | `logo_top`*, `logo_bottom`*, `testo`, `testo_bottom`, `colore_sfondo`, `colore_testo`, `formato` |
 
 (*) obbligatorio. `formato` ∈ `image/png` (default) \| `image/jpeg` \| `image/webp`.
 
-**Asset (`MediaRef`)**: `logo_host`, `ospiti`, `logo_top`/`logo_bottom` accettano un **id media**
-(intero) **oppure** un **nome file** (stringa) — risolti via `source` (id prima, poi filename). Un
-ospite non trovato → **avatar placeholder** (non è un errore); il **logo** mancante → `400`.
+**Asset (`MediaRef`)**: `logo_host`, `ospiti`, `logo_top`/`logo_bottom`, `font_titolo`/`font_testo`
+accettano un **id media** (intero) **oppure** un **nome file** (stringa) — risolti via `source` (id
+prima, poi filename). Un ospite non trovato → **avatar placeholder** (non è un errore); il **logo**
+mancante → `400`.
+
+**Font (`font_titolo`/`font_testo`)**: catena di fallback per ogni ruolo — font personalizzato (byte
+da `source`) → **Montserrat bundle** → **default Pillow**. Un font **richiesto ma non trovato** (o
+byte non validi) **non blocca**: si usa il predefinito e si aggiunge una voce a `warnings` (la
+risposta resta `201`). Asimmetria voluta: **logo mancante = `400`** (hard), **font mancante = warning
++ `201`** (soft).
 
 Risposte: `201` → `GeneratedImage` `{ id, tipo, media_type, size_bytes, created_at_s, content_url,
-download_url }` (gli URL puntano a `/v0/media/{id}/content`); `400` parametri invalidi o logo non
-trovato; `501` `tipo` non ancora implementato (es. `social`); `401` senza chiave.
+download_url, warnings[] }` (gli URL puntano a `/v0/media/{id}/content`; `warnings` elenca i fallback
+non bloccanti); `400` parametri invalidi o logo non trovato; `501` `tipo` non ancora implementato (es.
+`social`); `401` senza chiave.
 
 **Esempio (Bruno / curl).** Prima carica gli asset come media `image/*` per ottenerne gli id:
 
@@ -304,6 +340,72 @@ curl -X POST http://mediamanager-dev.duckdns.org/v0/content/image \
 # scarica l'immagine: GET http://mediamanager-dev.duckdns.org/v0/media/101/content
 ```
 
+### `tipo: composita` — motore a layer
+
+Mentre `copertina` è un template fisso, `composita` compone una **lista ordinata di layer** su una
+canvas **1920×1080** (HD YouTube). `layers` è un array: il **primo elemento è il fondo**, i
+successivi si impilano sopra (**z-order = ordine nell'array**), **senza numero massimo**. Ogni layer
+ha un `type` e i propri campi; gli asset (sfondi, persone, loghi, font) si referenziano per **id o
+nome file** (`MediaRef`).
+
+> **Nota lingua**: l'envelope (`tipo`, `formato`) resta in italiano come `copertina`/`social`; i
+> **campi dei layer sono in inglese** (motore generico). Il codice del compositor è in inglese.
+
+**Tipi di layer (`type`):**
+
+| `type` | A cosa serve | Campi principali |
+|--------|--------------|------------------|
+| `background` | immagine/colore a piena canvas | `media`, `fit` (`cover`\|`contain`\|`stretch`), `fallback_color` |
+| `person` | persona PNG **scontornata**, N affiancabili | `media`*, `x`, `y`, `size`, `opacity`, `required` |
+| `text` | testo (titolo/dettagli), `\n` multi-riga | `content`*, `font`, `font_size`, `color`, `align`, `x`, `y`, `max_width`, `stroke`, `box` |
+| `image` | logo/inserto/grafica sovrapposta | `media`*, `x`, `y`, `size`, `opacity`, `required` |
+
+**Posizionamento (`x`/`y`)** — tre forme, semantica unica:
+
+| Forma | Esempio | Significato |
+|-------|---------|-------------|
+| keyword | `x: left`\|`center`\|`right` · `y: top`\|`center`\|`bottom` | ancore (zucchero delle percentuali) |
+| percentuale | `x: "75%"` | **posizione nello spazio libero**: `0%` a filo, `100%` a filo opposto, `50%` centrato |
+| pixel | `x: "640"` / `"640px"` | coordinata assoluta del bordo del layer |
+
+`size` (`{width, height}`) accetta `%` o px; una sola → aspetto preservato; nessuna → naturale
+(clampata alla canvas, mai ingrandita).
+
+**Stile del testo** (è ciò che rende le copertine "da YouTube"):
+- `stroke`: `{width, color}` — bordo del testo (nativo Pillow).
+- `box`: `{color, radius, padding, opacity}` — riquadro arrotondato colorato dietro al testo
+  (i tipici box gialli/scuri con la scritta in grassetto).
+- `max_width`: se valorizzato, va a capo automatico sulle parole.
+
+**Asset mancante**: di default il layer viene **saltato con un `warning`** (la composizione non
+fallisce); con `required: true` invece → `400`. Lo sfondo mancante cade su `fallback_color`. I
+`font` seguono la stessa catena di `copertina` (custom → Montserrat → default Pillow + warning).
+
+**Standardizzazione**: lo schema è a **N layer** (nessun massimo); il template tipico è
+`background → person/e → testo titolo → testi/loghi di dettaglio`, ma resta libero di crescere.
+
+**Esempio** (riproduce una copertina tipo "Rassegna Stampa"):
+
+```jsonc
+{
+  "tipo": "composita",
+  "formato": "image/png",
+  "layers": [
+    { "type": "background", "media": 100, "fit": "cover" },
+    { "type": "person", "media": 101, "x": "right", "y": "bottom",
+      "size": { "height": "95%" } },
+    { "type": "text", "content": "RASSEGNA\nSTAMPA", "x": "left", "y": "12%",
+      "font": 30, "font_size": 150, "color": "#ff751f",
+      "stroke": { "width": 6, "color": "#000000" } },
+    { "type": "text", "content": "UFFICIALE!\nBINANCE FUORI LEGGE",
+      "x": "70%", "y": "55%", "font_size": 48, "color": "#000000",
+      "box": { "color": "#ffd200", "radius": 18, "padding": 16 } },
+    { "type": "text", "content": "EP. 26/2026", "x": "left", "y": "bottom",
+      "font_size": 60, "color": "#ffffff" }
+  ]
+}
+```
+
 ### Architettura
 
 ```
@@ -313,7 +415,8 @@ factory.py  ── build_image_service() ── SOURCE_INTERNAL_URL, API_KEY
         │
 services/image_service.py            orchestrazione: risolve MediaRef → byte, dispatch su `tipo`,
         │                            salva su source, ri-mappa URL /v0/source → /v0/media
-        ├── services/copertina_renderer.py   Pillow puro (2560×1440), niente rete/framework
+        ├── services/copertina_renderer.py   Pillow puro (copertina 2560×1440), niente rete/framework
+        ├── services/layer_compositor.py     Pillow puro (composita 1920×1080), compositing a layer
         └── gateway.py               SourceGateway: resolve_filename, get_bytes (segue il 302), upload_image
 ```
 
@@ -329,9 +432,12 @@ mancano, il renderer **non fallisce**: degrada al font di default di Pillow e lo
 | Aspetto | Oggi | Futuro |
 |---------|------|--------|
 | `POST /v0/content/image` `tipo: copertina` | ✅ Pillow, asset per id/nome file, output png/jpeg/webp | — |
+| `tipo: composita` (motore a layer 1920×1080) | ✅ `layer_compositor.py`: `background`/`person`/`text`/`image`, posizione keyword/%/px, `size`, `stroke`/`box`, N layer | template/preset salvabili |
 | `tipo: social` | 🚧 schema draft → `501` | porting di `social_processor.py` (1080×1080) |
 | Salvataggio risultato | ✅ come media `image/*` via `source`, recupero via `/v0/media` | — |
-| Font Montserrat | ⚠️ fallback al default se assenti | TTF montati in `FONTS_DIR` |
+| Font personalizzati (`font_titolo`/`font_testo`) | ✅ caricati su `source` (`font/ttf`/`otf`), referenziati per id/nome file | — |
+| Font mancante | ✅ fallback (custom → Montserrat → Pillow) + `warnings[]` nella risposta | — |
+| Font Montserrat bundle | ⚠️ fallback al default se assenti | TTF montati in `FONTS_DIR` |
 
 ---
 

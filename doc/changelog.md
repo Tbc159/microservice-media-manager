@@ -175,6 +175,35 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
 - **Unità deployabile**: `docker-compose.content.yml` + `config/content/{staging,collaudo,production}.env`.
 - **Dipendenza**: `Pillow` aggiunto a `requirements.txt`. Test: +22 (unit + integration), suite a 96.
 
+## 13. Font personalizzati e upload interno via URL (2026-06-27)
+
+- **`content`**: `CopertinaRequest` accetta `font_titolo`/`font_testo` (`MediaRef` = id o nome file di
+  un font su `source`). Catena di fallback per ruolo: **custom → Montserrat bundle → default Pillow**.
+  Un font richiesto ma assente/non valido **non blocca** (resta `201`): si segnala in **`warnings[]`**,
+  nuovo campo di `GeneratedImage`. Il renderer carica i font **dai byte** (`ImageFont.truetype(BytesIO)`).
+- **`source`**: nuovo endpoint **interno** `POST /v0/source/media/from-url` — il server scarica l'asset
+  da un URL e lo salva come gli altri media (riusa `SourceService.create`). Pensato per il provisioning
+  dei **font** dalla rete interna. Download con **timeout + cap 50 MB** (`downloader.py`, streaming con
+  abort); sicurezza leggera (dominio già `.internal`): nessun vincolo scheme/IP. Errori → `502`.
+- **Font solo interni**: enum `media_type` esteso con `font/ttf`/`font/otf` **solo** su `source` (non
+  su `media`): l'upload pubblico di font non esiste, si caricano dalla rete interna.
+- Test: +11 (unit + integration), suite a **107**. Nessun nuovo dominio/compose.
+
+## 14. Motore a layer `composita` (2026-06-29)
+
+- **`content`**: nuovo `tipo: composita` su `POST /v0/content/image` — **motore di compositing a
+  layer** su canvas **1920×1080**. `layers[]` è una lista ordinata (z-order = ordine array, **N layer,
+  nessun massimo**) di tipo `background`/`person`/`text`/`image`. Posizionamento `x`/`y` con keyword
+  (`left`/`center`/`right`/`top`/`bottom`), percentuale nello spazio libero (`0`→`100`) o pixel;
+  `size` in % o px (aspetto preservato). Testo con `stroke` (contorno) e `box` (riquadro arrotondato),
+  `align`, `max_width` (wrapping). Asset mancante → layer saltato con `warning` (o `400` se
+  `required: true`); sfondo mancante → `fallback_color`. Implementazione: `layer_compositor.py`
+  (Pillow puro), dispatch nel `ImageService`. Il `copertina` ("21milioni di chiacchiere") resta
+  invariato.
+- **Convenzione lingua**: envelope (`tipo`/`formato`) in italiano come gli altri `tipo`; **campi dei
+  layer in inglese** (motore generico) e **codice del compositor in inglese**.
+- Test: +10 (compositor + service + integration), suite a **117**.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

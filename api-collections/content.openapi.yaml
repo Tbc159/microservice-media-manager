@@ -3,20 +3,14 @@
 openapi: 3.0.3
 info:
   title: Content API
-  version: 0.1.0
-  description: 'Dominio "content": **BFF pubblico** per la *generazione di immagini* (copertine, social)
-
-    a partire da asset gia'' caricati su /v0/media. Il campo `tipo` nel body seleziona il
-
-    generatore. Gli asset (logo, ospiti) sono referenziati per **id media** (quelli restituiti
-
-    da POST /media) e risolti via source sulla rete interna. L''immagine prodotta viene salvata
-
-    come media `image/*` e se ne restituiscono gli URL per recuperarla (su /v0/media).
-
-    base_path /v0 e'' applicato da src/app.py.
-
-    '
+  version: 0.2.0
+  description: "Dominio \"content\": **BFF pubblico** per la *generazione di immagini* a partire da asset\n\
+    gia' caricati su /v0/media. Il campo `tipo` nel body seleziona il generatore:\n- `copertina` — template\
+    \ fisso (uso interno \"21milioni di chiacchiere\");\n- `composita` — **motore a layer**: canvas 1920x1080,\
+    \ lista ordinata di layer\n  (sfondo, persone, testo, immagini) componibili liberamente;\n- `social`\
+    \ — draft.\n\nGli asset (sfondi, persone, loghi, font) sono referenziati per **id media** o **nome\
+    \ file**\ne risolti via source sulla rete interna. L'immagine prodotta e' salvata come media `image/*`\n\
+    e se ne restituiscono gli URL per recuperarla (su /v0/media). base_path /v0 e' applicato da\nsrc/app.py.\n"
 servers:
 - url: http://mediamanager-dev.duckdns.org/v0
   description: 'dev (staging) - reverse-proxy esterno duckdns. Usa http: l''https ha cert self-signed.'
@@ -48,11 +42,13 @@ paths:
       tags:
       - content
       summary: Genera un'immagine e la salva come media
-      description: "Il campo `tipo` seleziona il generatore:\n- `copertina` — attivo: immagine 2560x1440\
-        \ con logo host, titolo, testo centrale e\n  fino a 5 avatar ospiti. Gli asset sono referenziati\
-        \ per id media (POST /media).\n- `social` — non ancora implementato: risponde **501**.\n\nL'immagine\
-        \ generata e' salvata come media `image/*`; la risposta contiene gli URL\n(`content_url`/`download_url`)\
-        \ su /v0/media per recuperarla.\n"
+      description: "Il campo `tipo` seleziona il generatore:\n- `copertina` — attivo: template fisso 2560x1440\
+        \ (logo host, titolo, testo centrale,\n  fino a 5 avatar ospiti). Asset per id media o nome file.\n\
+        - `composita` — attivo: **motore a layer** su canvas 1920x1080. `layers[]` ordinati\n  (z-order\
+        \ = ordine array) di tipo `background`/`person`/`text`/`image`. Asset (incl. font)\n  per id o\
+        \ nome file; posizione keyword/%/px; testo con `stroke`/`box`.\n- `social` — draft: risponde **501**.\n\
+        \nL'immagine generata e' salvata come media `image/*`; la risposta contiene gli URL\n(`content_url`/`download_url`)\
+        \ su /v0/media per recuperarla e gli eventuali `warnings`.\n"
       security:
       - ApiKeyAuth: []
       requestBody:
@@ -93,11 +89,13 @@ components:
         '
       oneOf:
       - $ref: '#/components/schemas/CopertinaRequest'
+      - $ref: '#/components/schemas/CompositaRequest'
       - $ref: '#/components/schemas/SocialRequest'
       discriminator:
         propertyName: tipo
         mapping:
           copertina: '#/components/schemas/CopertinaRequest'
+          composita: '#/components/schemas/CompositaRequest'
           social: '#/components/schemas/SocialRequest'
     MediaRef:
       description: 'Riferimento a un media gia'' caricato (via POST /media): l''**id** intero del record
@@ -169,6 +167,23 @@ components:
           - image/webp
           default: image/png
           description: Formato dell'immagine generata.
+        font_titolo:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: 'Font del titolo (id media o nome file di un font `font/ttf`|`font/otf`, caricato
+            su
+
+            source). Assente → Montserrat ExtraBold bundle. Non risolvibile → default Pillow + warning.
+
+            '
+        font_testo:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: 'Font del testo centrale (id media o nome file). Assente → Montserrat Light bundle.
+
+            Non risolvibile → default Pillow + warning.
+
+            '
     SocialRequest:
       type: object
       description: 'Generatore `social` (immagine quadrata 1080x1080) — schema **draft**: i campi sono
@@ -220,6 +235,249 @@ components:
           - image/webp
           default: image/png
           description: Formato dell'immagine generata.
+    CompositaRequest:
+      type: object
+      description: 'Layer-based engine on a **1920x1080** canvas. `layers` is an **ordered** list: the
+        first
+
+        element is the background, the others stack on top (z-order = array order). Each layer has a
+
+        `type` (`background`/`person`/`text`/`image`) and its own fields.
+
+        '
+      required:
+      - tipo
+      - layers
+      properties:
+        tipo:
+          type: string
+          enum:
+          - composita
+          description: Image-type discriminator (request envelope).
+        formato:
+          type: string
+          enum:
+          - image/png
+          - image/jpeg
+          - image/webp
+          default: image/png
+          description: Output image format.
+        layers:
+          type: array
+          minItems: 1
+          description: Layers to compose, from the background (first) to the top (last).
+          items:
+            oneOf:
+            - $ref: '#/components/schemas/BackgroundLayer'
+            - $ref: '#/components/schemas/PersonLayer'
+            - $ref: '#/components/schemas/TextLayer'
+            - $ref: '#/components/schemas/ImageLayer'
+            discriminator:
+              propertyName: type
+              mapping:
+                background: '#/components/schemas/BackgroundLayer'
+                person: '#/components/schemas/PersonLayer'
+                text: '#/components/schemas/TextLayer'
+                image: '#/components/schemas/ImageLayer'
+    PosX:
+      type: string
+      description: 'Horizontal position. Keyword (`left`/`center`/`right`), percentage within the free
+        space
+
+        (`"0%"`=flush left, `"100%"`=flush right, `"50%"`=centered) or pixel (`"640"`/`"640px"`).
+
+        '
+      pattern: ^(left|center|right|\d{1,3}%|\d+(px)?)$
+      default: center
+    PosY:
+      type: string
+      description: 'Vertical position. Keyword (`top`/`center`/`bottom`), percentage within the free space,
+        or
+
+        pixel.
+
+        '
+      pattern: ^(top|center|bottom|\d{1,3}%|\d+(px)?)$
+      default: center
+    Size:
+      type: object
+      description: 'Target size of the layer. Values in `%` (of the matching canvas dimension) or pixel.
+        Only
+
+        one given → aspect ratio preserved; both absent → natural size (clamped to the canvas).
+
+        '
+      properties:
+        width:
+          type: string
+          pattern: ^(\d{1,3}%|\d+(px)?)$
+        height:
+          type: string
+          pattern: ^(\d{1,3}%|\d+(px)?)$
+    Stroke:
+      type: object
+      description: Text stroke (outline).
+      properties:
+        width:
+          type: integer
+          minimum: 0
+          default: 0
+        color:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#000000'
+    Box:
+      type: object
+      description: Colored box behind the text, with rounded corners and padding.
+      required:
+      - color
+      properties:
+        color:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+        radius:
+          type: integer
+          minimum: 0
+          default: 0
+        padding:
+          type: integer
+          minimum: 0
+          default: 16
+        opacity:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 1
+    BackgroundLayer:
+      type: object
+      required:
+      - type
+      description: Full-canvas background (image or color).
+      properties:
+        type:
+          type: string
+          enum:
+          - background
+        media:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: Background image (id or filename). Absent/unresolved → `fallback_color`.
+        fit:
+          type: string
+          enum:
+          - cover
+          - contain
+          - stretch
+          default: cover
+          description: How to fit the image onto the canvas.
+        fallback_color:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#111111'
+    PersonLayer:
+      type: object
+      required:
+      - type
+      - media
+      description: Cut-out person (PNG with transparency), positionable and scalable.
+      properties:
+        type:
+          type: string
+          enum:
+          - person
+        media:
+          $ref: '#/components/schemas/MediaRef'
+        x:
+          $ref: '#/components/schemas/PosX'
+        y:
+          $ref: '#/components/schemas/PosY'
+        size:
+          $ref: '#/components/schemas/Size'
+        opacity:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 1
+        required:
+          type: boolean
+          default: false
+          description: If true and the asset is missing → 400. Otherwise the layer is skipped with a warning.
+    TextLayer:
+      type: object
+      required:
+      - type
+      - content
+      description: Text, with optional font/stroke/box. `\n` for multiple lines.
+      properties:
+        type:
+          type: string
+          enum:
+          - text
+        content:
+          type: string
+          example: 'RASSEGNA
+
+            STAMPA'
+        font:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: Font (id or filename of a font on source). Absent → bundled Montserrat.
+        font_size:
+          type: integer
+          minimum: 1
+          default: 72
+        color:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#ffffff'
+        align:
+          type: string
+          enum:
+          - left
+          - center
+          - right
+          default: left
+          description: Alignment of multi-line text.
+        x:
+          $ref: '#/components/schemas/PosX'
+        y:
+          $ref: '#/components/schemas/PosY'
+        max_width:
+          type: integer
+          nullable: true
+          description: Max width in px for automatic wrapping (absent → no wrap).
+        stroke:
+          $ref: '#/components/schemas/Stroke'
+        box:
+          $ref: '#/components/schemas/Box'
+    ImageLayer:
+      type: object
+      required:
+      - type
+      - media
+      description: Overlaid image/graphic/logo (logos, insets, effects).
+      properties:
+        type:
+          type: string
+          enum:
+          - image
+        media:
+          $ref: '#/components/schemas/MediaRef'
+        x:
+          $ref: '#/components/schemas/PosX'
+        y:
+          $ref: '#/components/schemas/PosY'
+        size:
+          $ref: '#/components/schemas/Size'
+        opacity:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 1
+        required:
+          type: boolean
+          default: false
+          description: If true and the asset is missing → 400. Otherwise the layer is skipped with a warning.
     GeneratedImage:
       type: object
       description: Esito della generazione; gli URL puntano a /v0/media per il recupero.
@@ -239,6 +497,7 @@ components:
           type: string
           enum:
           - copertina
+          - composita
           - social
           example: copertina
         media_type:
@@ -263,6 +522,19 @@ components:
           type: string
           description: URL (relativo) dei byte come allegato.
           example: /v0/media/101/content?download=1
+        warnings:
+          type: array
+          default: []
+          description: 'Avvisi non bloccanti sulla generazione. Es. font richiesto non presente → si è
+            usato
+
+            il font di default di Pillow. La risposta resta `201`.
+
+            '
+          items:
+            type: string
+          example:
+          - 'font ''MioFont.ttf'' non trovato: usato il default Pillow'
     Error:
       type: object
       properties:

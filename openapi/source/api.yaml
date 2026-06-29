@@ -45,7 +45,7 @@ paths:
           description: MIME type dei contenuti da recuperare
           schema:
             type: string
-            enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp]
+            enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp, font/ttf, font/otf]
             example: audio/m4a
         - name: title
           in: query
@@ -133,7 +133,7 @@ paths:
                   example: "Nuova puntata"
                 media_type:
                   type: string
-                  enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp]
+                  enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp, font/ttf, font/otf]
                   example: audio/m4a
                 duration_s:
                   type: integer
@@ -154,6 +154,74 @@ paths:
                 $ref: '../shared/components.yaml#/components/schemas/Error'
         '409':
           description: Esiste gia' un media con lo stesso nome/oggetto
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+
+  /source/media/from-url:
+    post:
+      operationId: upload_source_media_from_url
+      tags: [source]
+      summary: Carica un asset scaricandolo da un URL (uso interno)
+      description: |
+        Variante **interna** dell'upload: invece del file multipart, il server **scarica** il
+        contenuto da `url` e lo salva come gli altri media. Pensata per il provisioning di asset
+        dalla rete interna — in particolare i **font personalizzati** (l'upload pubblico di font
+        non esiste: i font si caricano solo da qui). Sicurezza **leggera** (il dominio è già
+        interno, `.internal`): timeout sul download e dimensione massima ~50 MB; nessun vincolo
+        di scheme o di IP.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, title, media_type]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: URL da cui scaricare il contenuto.
+                  example: "https://example.org/fonts/MioFont.ttf"
+                title:
+                  type: string
+                  example: "Mio Font"
+                media_type:
+                  type: string
+                  enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp, font/ttf, font/otf]
+                  example: font/ttf
+                filename:
+                  type: string
+                  nullable: true
+                  description: Nome file da usare per l'object_key; se omesso, dedotto dall'URL.
+                  example: "MioFont.ttf"
+                duration_s:
+                  type: integer
+                  nullable: true
+      responses:
+        '201':
+          description: Asset scaricato e salvato; restituisce il record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceMediaItem'
+        '400':
+          description: Richiesta non valida (campi mancanti, media_type fuori enum, URL non valido)
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+        '409':
+          description: Esiste gia' un media con lo stesso nome/oggetto
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+        '502':
+          description: Download fallito (URL irraggiungibile, troppo grande o errore remoto)
           content:
             application/json:
               schema:
