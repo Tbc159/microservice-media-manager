@@ -10,7 +10,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-from .base import DuplicateObjectKeyError
+from .base import DuplicateObjectKeyError, normalize_asset_name
 from .schema import SCHEMA_SQL
 
 _SELECT_COLS = (
@@ -86,6 +86,21 @@ class SqliteSourceMediaRepository:
                 (filename,),
             ).fetchone()
         return self._row_to_record(row) if row else None
+
+    def find_by_name(self, name: str) -> Optional[dict]:
+        exact = self.find_by_filename(name)
+        if exact is not None:
+            return exact
+        # Fallback normalizzato: scan leggero (id+filename) dal piu' recente, poi get().
+        target = normalize_asset_name(name)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, filename FROM source_media ORDER BY created_at_s DESC, id DESC"
+            ).fetchall()
+        for row in rows:
+            if normalize_asset_name(row["filename"]) == target:
+                return self.get(row["id"])
+        return None
 
     def insert(
         self,

@@ -100,7 +100,10 @@ components:
     MediaRef:
       description: |
         Riferimento a un media gia' caricato (via POST /media): l'**id** intero del record
-        oppure il **nome file** (stringa). La risoluzione prova prima l'id, poi il filename.
+        oppure il **nome** (stringa). Il nome e' risolto in modo **tollerante** — ignora
+        maiuscole/minuscole, l'estensione e il separatore (trattino/underscore/spazio):
+        `Montserrat-Bold.ttf`, `montserrat-bold` e `montserrat bold` coincidono. In caso di
+        piu' corrispondenze vince la piu' recente.
       oneOf:
         - type: integer
         - type: string

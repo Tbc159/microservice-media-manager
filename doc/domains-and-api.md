@@ -149,15 +149,18 @@ Metadati del **singolo** record (il listing è su `GET /v0/source/media`). Prote
 > sotto-risorsa esplicita. Un `GET /{id}` che restituisse i byte costringerebbe a scaricare il file
 > anche solo per leggere il titolo, e a inventare un altro path per i metadati.
 
-### `GET /v0/source/media/by-filename/{filename}`
-Risolve i metadati di un media per **nome file** (uso **interno**: il dominio `content` referenzia
-gli asset per id *o* per nome). Protetto (`X-API-Key`). `200` → `SourceMediaItem`; `404` se nessun
-record corrisponde. Il filename non è univoco (l'unicità è su `media_type/filename`): in caso di
-collisione tra tipi diversi restituisce il record **più recente**.
+### `GET /v0/source/media/by-filename/{name}`
+Risolve i metadati di un media per **nome** (uso **interno**: il dominio `content` referenzia gli
+asset per id *o* per nome). Protetto (`X-API-Key`). `200` → `SourceMediaItem`; `404` se nessun record
+corrisponde. La risoluzione è **tollerante**: prima il match **esatto** sul filename, poi un match
+**normalizzato** che ignora maiuscole, estensione e separatore — `Montserrat-Bold.ttf` ≡
+`montserrat-bold` ≡ `montserrat bold`. Il filename non è univoco (l'unicità è su
+`media_type/filename`): in caso di più match vince il **più recente**.
 
-> Implementato da `repo.find_by_filename()` (SQLite `ORDER BY created_at_s DESC, id DESC LIMIT 1`)
-> e `SourceService.get_item_by_filename()`. Endpoint a 4 segmenti (`.../by-filename/{filename}`),
-> distinto da `.../{id}` (3 segmenti, id intero): nessuna collisione di routing.
+> Implementato da `repo.find_by_name()` (esatto via indice, poi fallback normalizzato con
+> `normalize_asset_name`) e `SourceService.get_item_by_filename()`. Endpoint a 4 segmenti
+> (`.../by-filename/{name}`), distinto da `.../{id}` (3 segmenti, id intero): nessuna collisione di
+> routing.
 
 ### `GET /v0/source/media/{id}/content`
 I **byte** del media. Protetto (`X-API-Key`). Stessi byte dallo stesso storage; cambia solo la

@@ -186,6 +186,23 @@ def test_upload_from_url_invalid_media_type_400(client, monkeypatch):
     assert r.status_code == 400
 
 
+# --- GET /v0/source/media/by-filename/{name} (risoluzione tollerante) ---
+
+
+def test_resolve_by_name_tolerant(client):
+    _upload(client, filename="Montserrat-Bold.ttf", title="Mont",
+            media_type="font/ttf", content=b"FONT")
+    # normalizzato: senza estensione + case-insensitive
+    r = client.get("/v0/source/media/by-filename/montserrat-bold", headers=_KEY)
+    assert r.status_code == 200 and r.json()["filename"] == "Montserrat-Bold.ttf"
+    # match esatto continua a funzionare
+    assert client.get(
+        "/v0/source/media/by-filename/Montserrat-Bold.ttf", headers=_KEY
+    ).status_code == 200
+    # inesistente -> 404
+    assert client.get("/v0/source/media/by-filename/arial", headers=_KEY).status_code == 404
+
+
 # --- GET /v0/source/media/{id}/content (play inline / download) ---
 
 

@@ -204,6 +204,15 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
   layer in inglese** (motore generico) e **codice del compositor in inglese**.
 - Test: +10 (compositor + service + integration), suite a **117**.
 
+## 15. Risoluzione asset per nome tollerante (2026-06-29)
+
+- **`source`**: la risoluzione `by-filename` (usata da `content` per i `MediaRef` stringa, font
+  inclusi) ora è **tollerante** — `repo.find_by_name()`: match esatto sul filename, poi fallback
+  **normalizzato** (`normalize_asset_name`) che ignora maiuscole, estensione e separatore. Così un
+  font salvato come `Montserrat-Bold.ttf` si referenzia anche con `montserrat-bold` o
+  `montserrat bold`. In caso di più match vince il più recente.
+- Test: +4 (mock + sqlite + service + integration), suite a **121**.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

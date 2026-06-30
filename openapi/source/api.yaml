@@ -259,11 +259,13 @@ paths:
     get:
       operationId: resolve_source_media_by_filename
       tags: [source]
-      summary: Risolve i metadati di un media per nome file (uso interno)
+      summary: Risolve i metadati di un media per nome (uso interno, tollerante)
       description: |
         Endpoint interno: i consumer (es. dominio `content`) referenziano gli asset per
-        **nome file** oltre che per id. Il filename non e' univoco (l'unicita' e' su
-        `media_type/filename`): in caso di collisione restituisce il record piu' recente.
+        **nome** oltre che per id. Risoluzione **tollerante**: prima il match esatto sul
+        filename, poi un match normalizzato che ignora maiuscole, estensione e separatore
+        (`Montserrat-Bold.ttf` ≡ `montserrat-bold` ≡ `montserrat bold`). Il filename non e'
+        univoco (l'unicita' e' su `media_type/filename`): in caso di piu' match, il piu' recente.
       security:
         - ApiKeyAuth: []
       parameters:
