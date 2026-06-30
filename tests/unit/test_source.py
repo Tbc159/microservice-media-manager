@@ -156,6 +156,24 @@ def test_get_item_by_filename_resolves_and_none(tmp_path):
     assert svc.get_item_by_filename("inesistente.png") is None
 
 
+def test_find_by_name_tolerant_mock():
+    repo = MockSourceMediaRepository()
+    fid = repo.insert(title="Montserrat Bold", filename="Montserrat-Bold.ttf",
+                      media_type="font/ttf", object_key="font/ttf/Montserrat-Bold.ttf")
+    for query in ("Montserrat-Bold.ttf", "montserrat-bold", "montserrat bold",
+                  "MONTSERRAT_BOLD", "  montserrat   bold  "):
+        rec = repo.find_by_name(query)
+        assert rec is not None and rec["id"] == fid, query
+    assert repo.find_by_name("arial") is None
+
+
+def test_get_item_by_filename_tolerant(tmp_path):
+    svc = _svc_fs(tmp_path)
+    svc.create(title="Mont", media_type="font/ttf", filename="Montserrat-Bold.ttf", data=b"F")
+    item = svc.get_item_by_filename("montserrat bold")     # no estensione, spazio al posto del trattino
+    assert item is not None and item["filename"] == "Montserrat-Bold.ttf"
+
+
 def test_find_by_filename_collision_returns_latest():
     # filename uguale sotto due media_type diversi: object_key resta univoco, ma il
     # filename collide -> deve tornare il piu' recente (created_at_s/id maggiore).

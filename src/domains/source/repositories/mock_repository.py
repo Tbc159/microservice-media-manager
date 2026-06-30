@@ -6,7 +6,7 @@ non distingue i due. I dati sono per-istanza, cosi' insert() non sporca altri te
 import copy
 from typing import Optional
 
-from .base import DuplicateObjectKeyError
+from .base import DuplicateObjectKeyError, normalize_asset_name
 
 _SEED: list[dict] = [
     {
@@ -74,11 +74,21 @@ class MockSourceMediaRepository:
 
     def find_by_filename(self, filename: str) -> Optional[dict]:
         matches = [r for r in self._data if r["filename"] == filename]
+        return self._latest(matches)
+
+    def find_by_name(self, name: str) -> Optional[dict]:
+        exact = self.find_by_filename(name)
+        if exact is not None:
+            return exact
+        target = normalize_asset_name(name)
+        return self._latest([r for r in self._data if normalize_asset_name(r["filename"]) == target])
+
+    @staticmethod
+    def _latest(matches: list[dict]) -> Optional[dict]:
         if not matches:
             return None
         # piu' recente per coerenza con sqlite (created_at_s desc, id desc)
-        latest = max(matches, key=lambda r: (r["created_at_s"], r["id"]))
-        return copy.deepcopy(latest)
+        return copy.deepcopy(max(matches, key=lambda r: (r["created_at_s"], r["id"])))
 
     def insert(
         self,

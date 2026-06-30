@@ -84,3 +84,15 @@ def test_get_by_id(tmp_path):
     assert rec["title"] == "G"
     assert rec["metadata"] == {"a": 1}
     assert repo.get(99999) is None
+
+
+def test_find_by_name_tolerant(tmp_path):
+    repo = _repo(tmp_path)
+    fid = repo.insert(
+        title="Montserrat Bold", filename="Montserrat-Bold.ttf",
+        media_type="font/ttf", object_key="font/ttf/Montserrat-Bold.ttf",
+    )
+    for query in ("Montserrat-Bold.ttf", "montserrat-bold", "montserrat bold", "MONTSERRAT_BOLD"):
+        rec = repo.find_by_name(query)
+        assert rec is not None and rec["id"] == fid, query
+    assert repo.find_by_name("arial") is None
