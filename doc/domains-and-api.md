@@ -24,10 +24,17 @@ Endpoint (specchio di `source`, sul path pubblico):
 
 | Endpoint | Cosa fa |
 |----------|---------|
-| `GET /v0/media?type=&title=&page=&page_size=` | lista (delega a source); URL ri-mappati su `/v0/media` |
+| `GET /v0/media?type=&title=&page=&page_size=` | lista (delega a source); URL ri-mappati su `/v0/media`. **`type` e `title` opzionali**: senza `type` elenca tutto l'archivio |
 | `GET /v0/media/{id}` | metadati del singolo media |
 | `GET /v0/media/{id}/content[?download=1]` | byte: inline (play) o allegato (download) |
 | `POST /v0/media` | upload (multipart, delegato a source) |
+
+> **`media_type` — MIME e normalizzazione.** L'enum di **upload** accetta `audio/m4a`, `audio/mpeg`,
+> `audio/mp3` (**alias legacy** di `audio/mpeg`, normalizzato: archiviato e filtrabile come
+> `audio/mpeg`), `audio/wav`, `video/mp4`, `image/png|jpeg|webp`. Filtrare per `audio/mp3` o
+> `audio/mpeg` restituisce lo stesso insieme. `GET /v0/media` **senza `type`** elenca ogni tipo.
+> Il **filtro** `GET /v0/media?type=` accetta anche `font/ttf`/`font/otf` (i font sono **elencabili**),
+> ma l'**upload pubblico di font non esiste**: i font si caricano solo dalla rete interna (`source`).
 
 **Download/streaming — il nodo `media → source`** (`MediaService` + `SourceGateway`):
 - `media` chiama `source` con `follow_redirects=False`;
@@ -57,8 +64,8 @@ Query parameter:
 
 | Param | Obblig. | Tipo | Default | Note |
 |-------|---------|------|---------|------|
-| `type` | sì | enum | — | `audio/m4a` \| `audio/mp3` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` \| `font/ttf` \| `font/otf` |
-| `title` | no | string | — | match **esatto**; omesso → tutti i record del tipo |
+| `type` | **no** | enum | — | `audio/m4a` \| `audio/mpeg` \| `audio/mp3` (alias→mpeg) \| `audio/wav` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` \| `font/ttf` \| `font/otf`. **Omesso → tutti i tipi** |
+| `title` | no | string | — | match **esatto**; combinabile con `type` |
 | `page` | no | int ≥1 | 1 | pagina (1-based) |
 | `page_size` | no | int 1..100 | 20 | risultati per pagina |
 
@@ -94,7 +101,7 @@ Request `multipart/form-data`:
 |-------|---------|------|------|
 | `file` | sì | binary | contenuto del media (il nome file diventa parte dell'`object_key`) |
 | `title` | sì | string | titolo |
-| `media_type` | sì | enum | `audio/m4a` \| `audio/mp3` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` \| `font/ttf` \| `font/otf` |
+| `media_type` | sì | enum | `audio/m4a` \| `audio/mpeg` \| `audio/mp3` (alias→mpeg) \| `audio/wav` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` \| `font/ttf` \| `font/otf`. `audio/mp3` viene **normalizzato** a `audio/mpeg` (storage + `object_key`) |
 | `duration_s` | no | integer | durata in secondi |
 
 > Gli `image/*` sono stati aggiunti per gli **asset** (logo, avatar) usati dal dominio
@@ -302,10 +309,25 @@ campo `tipo` (discriminatore) seleziona il generatore e **quali campi** sono amm
 
 (*) obbligatorio. `formato` ∈ `image/png` (default) \| `image/jpeg` \| `image/webp`.
 
-**Asset (`MediaRef`)**: `logo_host`, `ospiti`, `logo_top`/`logo_bottom`, `font_titolo`/`font_testo`
-accettano un **id media** (intero) **oppure** un **nome file** (stringa) — risolti via `source` (id
-prima, poi filename). Un ospite non trovato → **avatar placeholder** (non è un errore); il **logo**
-mancante → `400`.
+**Asset (`MediaRef`)**: `logo_host`, `ospiti`, `logo_top`/`logo_bottom`, `font_titolo`/`font_testo`,
+`layers[].media`, `layers[].font` accettano un **id media** (intero) **oppure** il **`filename`**
+(stringa). Un ospite non trovato → **avatar placeholder** (non è un errore); il **logo** mancante → `400`.
+
+> ⚠️ **`filename`, non `title`.** `MediaItem` ha due campi testuali: `title` (quello che *invii* a
+> `POST /v0/media`) e `filename` (**generato dal servizio**). La risoluzione per stringa usa **solo il
+> `filename`**, che va **riletto dalla risposta** di `POST /v0/media`. Passare il `title` produce `400`.
+> Il match sul filename è tollerante (case/estensione/separatore).
+>
+> **Perché non risolviamo per `title`.** I title non sono univoci: risolverli imporrebbe o una scelta
+> silenziosa (il footgun) o un `409` su ogni ambiguità. Teniamo un'unica chiave stabile (`filename`) e
+> rendiamo l'errore *diagnostico*: il `400` indica **`field`** (es. `logo_host`, `layers[2].media`),
+> **`value`** ricevuto, **`searched_by`** (`filename`|`id`) e — se il valore coincide col `title` di un
+> media esistente — **suggerisce il `filename`** giusto. Corpo (schema `Error` esteso):
+>
+> ```json
+> { "detail": "asset non trovato per il campo 'logo_host': 'Logo Bianco' (ricerca per filename). Esiste però un media con quel *title* (id 60 -> filename 'logo-bianco.png'): i riferimenti usano il filename, non il title.",
+>   "field": "logo_host", "value": "Logo Bianco", "searched_by": "filename" }
+> ```
 
 **Font (`font_titolo`/`font_testo`)**: catena di fallback per ogni ruolo — font personalizzato (byte
 da `source`) → **Montserrat bundle** → **default Pillow**. Un font **richiesto ma non trovato** (o
@@ -315,8 +337,9 @@ risposta resta `201`). Asimmetria voluta: **logo mancante = `400`** (hard), **fo
 
 Risposte: `201` → `GeneratedImage` `{ id, tipo, media_type, size_bytes, created_at_s, content_url,
 download_url, warnings[] }` (gli URL puntano a `/v0/media/{id}/content`; `warnings` elenca i fallback
-non bloccanti); `400` parametri invalidi o logo non trovato; `501` `tipo` non ancora implementato (es.
-`social`); `401` senza chiave.
+non bloccanti); `400` parametri invalidi o asset **obbligatorio** non trovato (corpo **diagnostico**:
+`field`/`value`/`searched_by`, vedi sopra); `501` `tipo` non ancora implementato (es. `social`); `401`
+senza chiave.
 
 **Esempio (Bruno / curl).** Prima carica gli asset come media `image/*` per ottenerne gli id:
 
@@ -378,6 +401,8 @@ nome file** (`MediaRef`).
 - `stroke`: `{width, color}` — bordo del testo (nativo Pillow).
 - `box`: `{color, radius, padding, opacity}` — riquadro arrotondato colorato dietro al testo
   (i tipici box gialli/scuri con la scritta in grassetto).
+- `shadow`: `{color, offset{x,y}, blur, opacity}` — ombra o **glow/neon**: `offset {0,0}` + `blur`
+  alto = alone luminoso (es. "LIVE"); offset valorizzato + `blur` basso = ombra portata.
 - `max_width`: se valorizzato, va a capo automatico sulle parole.
 
 **Asset mancante**: di default il layer viene **saltato con un `warning`** (la composizione non
@@ -408,6 +433,24 @@ fallisce); con `required: true` invece → `400`. Lo sfondo mancante cade su `fa
   ]
 }
 ```
+
+### `GET /v0/content/fonts` — catalogo font
+
+Elenco dei font caricati su `source` (`font/ttf`/`font/otf`), referenziabili nei layer `text`
+(campo `font`) o in `copertina` per **id** o **nome** (risoluzione tollerante). Protetto
+(`X-API-Key`). `200` → array di `FontInfo` `{ id, name, filename, media_type, size_bytes?, created_at_s }`.
+
+**Kit font consigliato** (free, Google Fonts, incorporabili) per riprodurre lo stile dei canali:
+
+| Nome canonico | Uso | Famiglia |
+|---|---|---|
+| `montserrat-black` / `-extrabold` / `-bold` / `-regular` | titoli e testi | Montserrat |
+| `bebas-neue` | display condensato ("LIVE", titoli punchy) | Bebas Neue |
+| `great-vibes` | script elegante (firme "con … ") | Great Vibes |
+| `pacifico` | brush/firma | Pacifico |
+
+Si caricano una volta sola **dalla rete interna** con `POST /v0/source/media/from-url` (i Google
+Fonts hanno URL `.ttf` diretti), scegliendo il `filename` canonico; poi si referenziano per nome.
 
 ### Architettura
 

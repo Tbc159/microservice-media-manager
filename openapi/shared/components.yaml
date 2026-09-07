@@ -20,6 +20,19 @@ components:
       properties:
         detail:
           type: string
+          description: Messaggio leggibile che descrive l'errore.
+        field:
+          type: string
+          description: |
+            Campo della richiesta che ha causato l'errore, quando individuabile
+            (es. `logo_host`, `layers[2].media`). Utile per gli errori di riferimento asset.
+        value:
+          description: Valore ricevuto per `field` (l'input che non e' stato risolto/validato).
+        searched_by:
+          type: string
+          description: |
+            Come e' stato interpretato `value` durante la risoluzione (es. `filename` o `id`):
+            permette al client di capire se ha usato il campo sbagliato.
 
     PaginationMeta:
       type: object

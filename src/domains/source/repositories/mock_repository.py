@@ -37,8 +37,8 @@ _SEED: list[dict] = [
         "id": 3,
         "title": "Sigla intro",
         "filename": "2024-03-sigla-intro.mp3",
-        "media_type": "audio/mp3",
-        "object_key": "audio/mp3/2024-03-sigla-intro.mp3",
+        "media_type": "audio/mpeg",
+        "object_key": "audio/mpeg/2024-03-sigla-intro.mp3",
         "size_bytes": 3_200_000,
         "duration_s": 42,
         "created_at_s": 1700172800,
@@ -54,12 +54,14 @@ class MockSourceMediaRepository:
 
     def find(
         self,
-        media_type: str,
+        media_type: Optional[str],
         title: Optional[str],
         page: int,
         page_size: int,
     ) -> tuple[list[dict], int]:
-        results = [r for r in self._data if r["media_type"] == media_type]
+        results = list(self._data)
+        if media_type is not None:
+            results = [r for r in results if r["media_type"] == media_type]
         if title is not None:
             results = [r for r in results if r["title"] == title]
         total = len(results)

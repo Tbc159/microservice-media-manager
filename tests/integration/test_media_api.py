@@ -85,6 +85,26 @@ def test_list_requires_key_and_remaps(client):
     assert "/v0/source" not in item["download_url"]
 
 
+def test_list_without_type_is_allowed(client):
+    # type non e' piu' obbligatorio: si puo' elencare l'archivio
+    r = client.get("/v0/media", headers=_KEY)
+    assert r.status_code == 200
+    assert r.json()["items"]
+
+
+def test_fonts_are_listable_but_not_publicly_uploadable(client):
+    # font/* accettato dal FILTRO (lettura)...
+    assert client.get("/v0/media?type=font/ttf", headers=_KEY).status_code == 200
+    # ...ma NON dall'upload pubblico (enum del requestBody non include i font)
+    r = client.post(
+        "/v0/media",
+        files={"file": ("x.ttf", b"FONT", "font/ttf")},
+        data={"title": "F", "media_type": "font/ttf"},
+        headers=_KEY,
+    )
+    assert r.status_code in (400, 422)
+
+
 def test_get_single_and_404(client):
     assert client.get("/v0/media/1", headers=_KEY).json()["content_url"] == "/v0/media/1/content"
     assert client.get("/v0/media/999", headers=_KEY).status_code == 404

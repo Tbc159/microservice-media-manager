@@ -42,12 +42,14 @@ class SourceGateway:
     def list_media(
         self,
         *,
-        media_type: str,
+        media_type: Optional[str] = None,
         title: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict:
-        params: dict = {"type": media_type, "page": page, "page_size": page_size}
+        params: dict = {"page": page, "page_size": page_size}
+        if media_type is not None:
+            params["type"] = media_type
         if title is not None:
             params["title"] = title
         r = httpx.get(

@@ -16,6 +16,11 @@ _SOURCE_PREFIX = "/v0/source/media/"
 _MEDIA_PREFIX = "/v0/media/"
 
 
+def _is_int_ref(ref) -> bool:
+    """True se il MediaRef e' un id intero (bool escluso: e' sottoclasse di int)."""
+    return isinstance(ref, int) and not isinstance(ref, bool)
+
+
 class ImageService:
     def __init__(self, gateway: SourceGateway) -> None:
         self._gw = gateway
@@ -60,11 +65,11 @@ class ImageService:
 
         logo_bytes = self._fetch_ref(body["logo_host"])
         if logo_bytes is None:
-            raise AssetNotFound(body["logo_host"])
+            raise self._asset_not_found(body["logo_host"], field="logo_host")
 
         ospiti_bytes: List[Optional[bytes]] = [self._fetch_ref(o) for o in body.get("ospiti", [])]
-        font_titolo = self._fetch_font(body.get("font_titolo"), "titolo", warnings)
-        font_testo = self._fetch_font(body.get("font_testo"), "testo", warnings)
+        font_titolo = self._fetch_font(body.get("font_titolo"), "titolo", "font_titolo", warnings)
+        font_testo = self._fetch_font(body.get("font_testo"), "testo", "font_testo", warnings)
 
         image, render_warnings = copertina_renderer.render_copertina(
             titolo=body["titolo"],
@@ -103,22 +108,27 @@ class ImageService:
         warnings: List[str] = []
         resolved: List[dict] = []
 
-        for layer in body["layers"]:
+        for i, layer in enumerate(body["layers"]):
             ltype = layer["type"]
+            field = f"layers[{i}].media"
             if ltype == "background":
                 item = dict(layer)
                 ref = layer.get("media")
                 item["image_bytes"] = self._fetch_ref(ref) if ref is not None else None
                 if ref is not None and item["image_bytes"] is None:
-                    warnings.append(f"sfondo '{ref}' non trovato: usato il colore di fallback")
+                    warnings.append(
+                        f"sfondo ({field}) '{ref}' non trovato per filename: usato il colore di fallback"
+                    )
                 resolved.append(item)
             elif ltype in ("person", "image"):
                 ref = layer["media"]
                 data = self._fetch_ref(ref)
                 if data is None:
                     if layer.get("required"):
-                        raise AssetNotFound(ref)
-                    warnings.append(f"layer {ltype} '{ref}' non trovato: layer saltato")
+                        raise self._asset_not_found(ref, field=field)
+                    warnings.append(
+                        f"layer {ltype} ({field}) '{ref}' non trovato per filename: layer saltato"
+                    )
                     continue
                 item = dict(layer)
                 item["image_bytes"] = data
@@ -127,7 +137,9 @@ class ImageService:
                 item = dict(layer)
                 font_ref = layer.get("font")
                 item["font_bytes"] = (
-                    self._fetch_font(font_ref, "testo", warnings) if font_ref is not None else None
+                    self._fetch_font(font_ref, "testo", f"layers[{i}].font", warnings)
+                    if font_ref is not None
+                    else None
                 )
                 resolved.append(item)
 
@@ -144,7 +156,7 @@ class ImageService:
         dto["warnings"] = warnings
         return dto
 
-    def _fetch_font(self, ref, role: str, warnings: List[str]) -> Optional[bytes]:
+    def _fetch_font(self, ref, role: str, field: str, warnings: List[str]) -> Optional[bytes]:
         """Risolve un font referenziato (id o nome file) nei byte. Ref assente -> None
         (il renderer usa il Montserrat bundle). Ref presente ma non trovato -> warning + None
         (degradazione soft: il font richiesto non esiste, si userà il predefinito)."""
@@ -152,20 +164,35 @@ class ImageService:
             return None
         data = self._fetch_ref(ref)
         if data is None:
-            warnings.append(f"font {role} '{ref}' non trovato: usato il font predefinito")
+            by = "id" if _is_int_ref(ref) else "filename"
+            warnings.append(
+                f"font {role} ({field}) '{ref}' non trovato (ricerca per {by}): "
+                "usato il font predefinito"
+            )
         return data
 
     def _fetch_ref(self, ref) -> Optional[bytes]:
         """Risolve un MediaRef (id intero o nome file) nei byte dell'asset, o None."""
-        # bool e' sottoclasse di int: lo schema usa interi, ma per sicurezza lo escludiamo.
-        if isinstance(ref, bool):
-            return None
-        if isinstance(ref, int):
+        if _is_int_ref(ref):
             return self._gw.get_bytes(ref)
         record = self._gw.resolve_filename(str(ref))
         if record is None:
             return None
         return self._gw.get_bytes(record["id"])
+
+    def _asset_not_found(self, value, *, field: str) -> AssetNotFound:
+        """Costruisce un AssetNotFound diagnosticabile. Per un riferimento-stringa (ricerca
+        per filename) cerca un match per **title** e lo allega come suggerimento: e' il
+        tranello tipico (title al posto di filename)."""
+        if _is_int_ref(value):
+            return AssetNotFound(value, field=field, searched_by="id")
+        matches = self._gw.find_by_title(str(value))
+        return AssetNotFound(
+            value,
+            field=field,
+            searched_by="filename",
+            title_matches=[{"id": m["id"], "filename": m["filename"]} for m in matches],
+        )
 
     @staticmethod
     def _to_generated(source_payload: dict, *, tipo: str, formato: str) -> dict:

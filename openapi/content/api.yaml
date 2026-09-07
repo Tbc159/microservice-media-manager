@@ -119,15 +119,32 @@ components:
 
     MediaRef:
       description: |
-        Riferimento a un media gia' caricato (via POST /media): l'**id** intero del record
-        oppure il **nome** (stringa). Il nome e' risolto in modo **tollerante** — ignora
-        maiuscole/minuscole, l'estensione e il separatore (trattino/underscore/spazio):
-        `Montserrat-Bold.ttf`, `montserrat-bold` e `montserrat bold` coincidono. In caso di
-        piu' corrispondenze vince la piu' recente.
+        Riferimento a un media gia' caricato (via `POST /v0/media`). Due forme:
+
+        - **id** — l'intero `id` del record (`MediaItem.id`).
+        - **filename** — la stringa `MediaItem.filename` (NON `title`).
+
+        ⚠️ **`filename`, non `title`.** `MediaItem` ha due campi testuali diversi: `title`
+        (il titolo *che invii tu* a `POST /v0/media`) e `filename` (il nome file, **generato
+        dal servizio** dal file caricato). La risoluzione per stringa usa **solo `filename`**;
+        passare il `title` NON funziona e produce `400` (vedi la risposta `400` di
+        `POST /v0/content/image`, che indica il campo, il valore e che la ricerca e' per filename).
+
+        Il `filename` **non e' quello che hai inviato**: va **riletto dalla risposta** di
+        `POST /v0/media` (campo `filename`). Esempio: carichi un logo con
+        `title: "Logo Bitcoin Radio"` e ricevi `{ "id": 42, "filename": "logo-bitcoin-radio.png",
+        "title": "Logo Bitcoin Radio", ... }` → nei layer usi `42` **oppure**
+        `"logo-bitcoin-radio.png"`, **mai** `"Logo Bitcoin Radio"`.
+
+        Il match sul `filename` e' **tollerante**: ignora maiuscole/minuscole, l'estensione e il
+        separatore (trattino/underscore/spazio), quindi `Montserrat-Bold.ttf`, `montserrat-bold`
+        e `montserrat bold` coincidono. In caso di piu' corrispondenze vince la piu' recente.
       oneOf:
         - type: integer
+          description: id del record (MediaItem.id).
         - type: string
-      example: 12
+          description: MediaItem.filename (generato dal servizio; NON title).
+      example: 42
 
     CopertinaRequest:
       type: object

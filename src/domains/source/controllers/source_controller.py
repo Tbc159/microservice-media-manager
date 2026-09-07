@@ -25,7 +25,7 @@ def _is_truthy(value) -> bool:
 
 
 def query_source_media(
-    type: str,
+    type: Optional[str] = None,
     title: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,

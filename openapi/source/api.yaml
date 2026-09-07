@@ -30,22 +30,26 @@ paths:
     get:
       operationId: query_source_media
       tags: [source]
-      summary: Recupera media sorgente filtrati per tipo e titolo opzionale
+      summary: Recupera media sorgente, con filtri opzionali per tipo e titolo
       description: |
         Restituisce sempre un envelope paginato (items puo' essere vuoto, non e' un errore).
-        - Solo `type`: tutti i record con quel MIME type.
-        - Con `title`: filtra per titolo esatto.
+        - Nessun filtro: **tutti** i record (l'intero archivio, paginato).
+        - Solo `type`: i record con quel MIME type.
+        - Con `title`: filtra per titolo esatto (combinabile con `type`).
         - `page` e `page_size` controllano la finestra di risultati.
+
+        `audio/mp3` e' accettato come alias legacy di `audio/mpeg` (MIME registrato) e
+        normalizzato: filtrare per l'uno o per l'altro restituisce lo stesso insieme.
       security:
         - ApiKeyAuth: []
       parameters:
         - name: type
           in: query
-          required: true
-          description: MIME type dei contenuti da recuperare
+          required: false
+          description: MIME type dei contenuti da recuperare. Omettere per tutti i tipi.
           schema:
             type: string
-            enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp, font/ttf, font/otf]
+            enum: [audio/m4a, audio/mpeg, audio/mp3, audio/wav, video/mp4, image/png, image/jpeg, image/webp, font/ttf, font/otf]
             example: audio/m4a
         - name: title
           in: query
@@ -99,7 +103,7 @@ paths:
                   total: 2
                   total_pages: 1
         '400':
-          description: Parametro `type` mancante o non valido
+          description: Parametro `type` non valido (fuori enum)
           content:
             application/json:
               schema:
@@ -133,7 +137,7 @@ paths:
                   example: "Nuova puntata"
                 media_type:
                   type: string
-                  enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp, font/ttf, font/otf]
+                  enum: [audio/m4a, audio/mpeg, audio/mp3, audio/wav, video/mp4, image/png, image/jpeg, image/webp, font/ttf, font/otf]
                   example: audio/m4a
                 duration_s:
                   type: integer
@@ -191,7 +195,7 @@ paths:
                   example: "Mio Font"
                 media_type:
                   type: string
-                  enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp, font/ttf, font/otf]
+                  enum: [audio/m4a, audio/mpeg, audio/mp3, audio/wav, video/mp4, image/png, image/jpeg, image/webp, font/ttf, font/otf]
                   example: font/ttf
                 filename:
                   type: string

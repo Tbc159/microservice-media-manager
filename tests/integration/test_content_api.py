@@ -30,6 +30,12 @@ class _FakeGateway:
     def resolve_filename(self, filename):
         return {"id": 50, "filename": filename, "media_type": "image/png"} if filename == "logo.png" else None
 
+    def find_by_title(self, title, page_size=10):
+        if title == "Logo Bianco":
+            return [{"id": 60, "title": "Logo Bianco", "filename": "logo-bianco.png",
+                     "media_type": "image/png"}]
+        return []
+
     def get_bytes(self, media_id):
         return _LOGO if media_id in (10, 50) else None
 
@@ -109,13 +115,33 @@ def test_logo_by_filename(client):
     assert r.status_code == 201
 
 
-def test_missing_logo_is_400(client):
+def test_missing_logo_is_400_with_diagnostic_body(client):
     r = client.post(
         "/v0/content/image",
         json={"tipo": "copertina", "titolo": "B", "testo_centrale": "c", "logo_host": 404},
         headers=_KEY,
     )
     assert r.status_code == 400
+    body = r.json()
+    assert body["field"] == "logo_host"
+    assert body["value"] == 404
+    assert body["searched_by"] == "id"
+    assert "detail" in body
+
+
+def test_400_hints_filename_when_title_passed(client):
+    # il client passa il TITLE 'Logo Bianco' al posto del filename -> 400 che suggerisce il filename
+    r = client.post(
+        "/v0/content/image",
+        json={"tipo": "copertina", "titolo": "B", "testo_centrale": "c",
+              "logo_host": "Logo Bianco"},
+        headers=_KEY,
+    )
+    assert r.status_code == 400
+    body = r.json()
+    assert body["field"] == "logo_host"
+    assert body["searched_by"] == "filename"
+    assert "logo-bianco.png" in body["detail"]
 
 
 def test_generate_composita_201(client):

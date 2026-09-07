@@ -226,6 +226,29 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
 - In sospeso/da approfondire: **preset di brand** (`report-live`/`report-talk`) come template
   fissi, sul modello `copertina`/"21milioni" (in attesa dei dettagli).
 
+## 17. Contratto non fraintendibile + errori diagnosticabili (2026-06-30)
+
+Nessun cambio di comportamento nella generazione; il contratto viene reso non ambiguo e gli
+errori che ne derivano diagnosticabili (spunto: un client aveva usato `title` al posto di `filename`).
+
+- **`MediaRef` disambiguato** (`openapi/content`): il riferimento-stringa è il **`filename`**
+  (generato dal servizio, da rileggere dalla risposta di `POST /v0/media`), **non** il `title`.
+  Esempio con `title` ≠ `filename`.
+- **`400` diagnosticabile**: lo schema condiviso `Error` guadagna `field`, `value`, `searched_by`;
+  il dominio `content` popola questi campi (es. `field="layers[2].media"`, `searched_by="filename"`)
+  e, quando il valore coincide col `title` di un media esistente, **suggerisce il `filename`** giusto.
+- **Decisione — niente risoluzione per `title`** (motivata): i title non sono univoci; risolverli
+  imporrebbe scelta silenziosa o `409` su ogni ambiguità. Si tiene un'unica chiave (`filename`) e si
+  trasforma l'errore in suggerimento puntuale.
+- **Incoerenze `media_type` sanate**: `audio/mp3` diventa **alias legacy** di `audio/mpeg` (MIME
+  registrato) con **normalizzazione** su scrittura e query (`SourceService.normalize_media_type`);
+  aggiunto `audio/wav`; `GET /v0/media` e `GET /v0/source/media` hanno **`type` opzionale** (elenco
+  di tutto l'archivio). Il branch stale `feature/list-all-media` (senza commit propri) può essere chiuso.
+- **Contract test** (`tests/contract/`): verifica insieme che la spec dichiari `filename`/`status`
+  `required` **e** che il servizio li restituisca (guardia anti-drift bidirezionale).
+- Test: +12, suite a **137**. *In sospeso*: se aggiungere `font/ttf`/`font/otf` all'enum pubblico di
+  `media` (contrasta con la decisione precedente "font solo dalla rete interna") — da confermare.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

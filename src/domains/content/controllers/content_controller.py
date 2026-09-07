@@ -21,5 +21,5 @@ def generate_image(body: dict):
     except TipoNonImplementato as exc:
         return {"detail": f"tipo non ancora implementato: {exc.tipo}"}, 501
     except AssetNotFound as exc:
-        return {"detail": f"asset non trovato: {exc.ref}"}, 400
+        return exc.to_body(), 400
     return item, 201

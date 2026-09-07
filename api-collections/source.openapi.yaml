@@ -49,14 +49,21 @@ paths:
       operationId: query_source_media
       tags:
       - source
-      summary: Recupera media sorgente filtrati per tipo e titolo opzionale
+      summary: Recupera media sorgente, con filtri opzionali per tipo e titolo
       description: 'Restituisce sempre un envelope paginato (items puo'' essere vuoto, non e'' un errore).
 
-        - Solo `type`: tutti i record con quel MIME type.
+        - Nessun filtro: **tutti** i record (l''intero archivio, paginato).
 
-        - Con `title`: filtra per titolo esatto.
+        - Solo `type`: i record con quel MIME type.
+
+        - Con `title`: filtra per titolo esatto (combinabile con `type`).
 
         - `page` e `page_size` controllano la finestra di risultati.
+
+
+        `audio/mp3` e'' accettato come alias legacy di `audio/mpeg` (MIME registrato) e
+
+        normalizzato: filtrare per l''uno o per l''altro restituisce lo stesso insieme.
 
         '
       security:
@@ -64,13 +71,15 @@ paths:
       parameters:
       - name: type
         in: query
-        required: true
-        description: MIME type dei contenuti da recuperare
+        required: false
+        description: MIME type dei contenuti da recuperare. Omettere per tutti i tipi.
         schema:
           type: string
           enum:
           - audio/m4a
+          - audio/mpeg
           - audio/mp3
+          - audio/wav
           - video/mp4
           - image/png
           - image/jpeg
@@ -130,7 +139,7 @@ paths:
                   total: 2
                   total_pages: 1
         '400':
-          description: Parametro `type` mancante o non valido
+          description: Parametro `type` non valido (fuori enum)
           content:
             application/json:
               schema:
@@ -174,7 +183,9 @@ paths:
                   type: string
                   enum:
                   - audio/m4a
+                  - audio/mpeg
                   - audio/mp3
+                  - audio/wav
                   - video/mp4
                   - image/png
                   - image/jpeg
@@ -250,7 +261,9 @@ paths:
                   type: string
                   enum:
                   - audio/m4a
+                  - audio/mpeg
                   - audio/mp3
+                  - audio/wav
                   - video/mp4
                   - image/png
                   - image/jpeg
@@ -518,6 +531,23 @@ components:
       properties:
         detail:
           type: string
+          description: Messaggio leggibile che descrive l'errore.
+        field:
+          type: string
+          description: 'Campo della richiesta che ha causato l''errore, quando individuabile
+
+            (es. `logo_host`, `layers[2].media`). Utile per gli errori di riferimento asset.
+
+            '
+        value:
+          description: Valore ricevuto per `field` (l'input che non e' stato risolto/validato).
+        searched_by:
+          type: string
+          description: 'Come e'' stato interpretato `value` durante la risoluzione (es. `filename` o `id`):
+
+            permette al client di capire se ha usato il campo sbagliato.
+
+            '
     Health:
       type: object
       properties:

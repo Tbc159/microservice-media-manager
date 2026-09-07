@@ -47,6 +47,13 @@ class _FakeGateway:
             ]
         return []
 
+    def find_by_title(self, title, page_size=10):
+        # "Logo Bianco" e' il *title* di un media il cui filename e' 'logo-bianco.png'
+        if title == "Logo Bianco":
+            return [{"id": 60, "title": "Logo Bianco", "filename": "logo-bianco.png",
+                     "media_type": "image/png"}]
+        return []
+
     def get_bytes(self, media_id):
         return {10: _LOGO, 50: _LOGO, 21: _AVATAR}.get(media_id)  # 22 -> None
 
@@ -178,11 +185,45 @@ def test_logo_by_filename_is_resolved():
     assert item["id"] == 99
 
 
-def test_missing_logo_raises_assetnotfound():
-    with pytest.raises(AssetNotFound):
+def test_missing_logo_raises_assetnotfound_with_field_and_id_search():
+    with pytest.raises(AssetNotFound) as ei:
         _svc().generate(
             {"tipo": "copertina", "titolo": "B", "testo_centrale": "c", "logo_host": 404}
         )
+    exc = ei.value
+    assert exc.field == "logo_host"
+    assert exc.value == 404
+    assert exc.searched_by == "id"                 # riferimento intero -> ricerca per id
+    assert exc.title_matches == []
+
+
+def test_missing_logo_by_string_searches_filename_and_hints_title():
+    # il client ha passato il TITLE ("Logo Bianco") invece del filename: l'errore lo spiega
+    with pytest.raises(AssetNotFound) as ei:
+        _svc().generate(
+            {"tipo": "copertina", "titolo": "B", "testo_centrale": "c",
+             "logo_host": "Logo Bianco"}
+        )
+    exc = ei.value
+    assert exc.field == "logo_host"
+    assert exc.searched_by == "filename"
+    assert exc.title_matches == [{"id": 60, "filename": "logo-bianco.png"}]
+    body = exc.to_body()
+    assert body["field"] == "logo_host"
+    assert body["searched_by"] == "filename"
+    assert "title" in body["detail"] and "logo-bianco.png" in body["detail"]
+
+
+def test_composita_required_layer_field_path():
+    with pytest.raises(AssetNotFound) as ei:
+        _svc().generate({
+            "tipo": "composita",
+            "layers": [
+                {"type": "background", "fallback_color": "#000000"},
+                {"type": "person", "media": 404, "required": True},
+            ],
+        })
+    assert ei.value.field == "layers[1].media"
 
 
 def test_missing_ospite_uses_placeholder_and_succeeds():
