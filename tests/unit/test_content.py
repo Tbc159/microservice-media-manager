@@ -37,6 +37,16 @@ class _FakeGateway:
             return {"id": 50, "filename": "logo.png", "media_type": "image/png"}
         return None
 
+    def list_by_type(self, media_type, page_size=100):
+        if media_type == "font/ttf":
+            return [
+                {"id": 70, "title": "Montserrat Black", "filename": "montserrat-black.ttf",
+                 "media_type": "font/ttf", "size_bytes": 100, "created_at_s": 1700000000},
+                {"id": 71, "title": "Bebas Neue", "filename": "bebas-neue.ttf",
+                 "media_type": "font/ttf", "size_bytes": 90, "created_at_s": 1700000001},
+            ]
+        return []
+
     def get_bytes(self, media_id):
         return {10: _LOGO, 50: _LOGO, 21: _AVATAR}.get(media_id)  # 22 -> None
 
@@ -319,3 +329,24 @@ def test_composita_missing_background_falls_back_with_warning():
     })
     assert item["id"] == 99
     assert any("sfondo" in w and "404" in w for w in item["warnings"])
+
+
+def test_compositor_text_shadow_and_glow():
+    raw, _ = layer_compositor.render_composita([
+        {"type": "background", "fallback_color": "#001020", "image_bytes": None},
+        {"type": "text", "content": "LIVE", "x": "center", "y": "center", "font_size": 180,
+         "color": "#ff3333",
+         "shadow": {"color": "#ff0000", "offset": {"x": 0, "y": 0}, "blur": 25, "opacity": 0.9}},
+        {"type": "text", "content": "drop", "x": "left", "y": "top", "font_size": 70,
+         "color": "#ffffff", "shadow": {"color": "#000000", "offset": {"x": 6, "y": 6}, "blur": 3}},
+    ])
+    assert Image.open(io.BytesIO(raw)).size == (1920, 1080)
+
+
+# ── catalogo font ───────────────────────────────────────────────────────────────
+
+def test_list_fonts_catalog():
+    fonts = ImageService(_FakeGateway()).list_fonts()
+    assert [f["name"] for f in fonts] == ["Bebas Neue", "Montserrat Black"]   # ordinati per nome
+    assert fonts[0]["filename"] == "bebas-neue.ttf"
+    assert fonts[0]["media_type"] == "font/ttf"

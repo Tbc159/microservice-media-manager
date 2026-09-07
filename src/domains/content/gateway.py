@@ -39,6 +39,17 @@ class SourceGateway:
         r.raise_for_status()
         return r.json()
 
+    def list_by_type(self, media_type: str, page_size: int = 100) -> list[dict]:
+        """Elenco (non paginato) dei media di un tipo. Usato per il catalogo font."""
+        r = httpx.get(
+            f"{self._base}/media",
+            params={"type": media_type, "page": 1, "page_size": page_size},
+            headers=self._headers,
+            timeout=self._timeout,
+        )
+        r.raise_for_status()
+        return r.json().get("items", [])
+
     def get_bytes(self, media_id: int) -> Optional[bytes]:
         """Byte di un media per id. Segue il 302 (coll/prod) per ottenere i byte reali.
         None se l'id non esiste o i byte mancano (404)."""

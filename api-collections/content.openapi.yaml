@@ -76,6 +76,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /content/fonts:
+    get:
+      operationId: list_fonts
+      tags:
+      - content
+      summary: Elenco dei font disponibili per la generazione
+      description: 'Catalogo dei font (`font/ttf`/`font/otf`) caricati su source, referenziabili nei layer
+
+        `text` (campo `font`) o in `copertina` per **id** o **nome** (risoluzione tollerante).
+
+        '
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Font disponibili
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FontInfo'
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -354,6 +376,38 @@ components:
           minimum: 0
           maximum: 1
           default: 1
+    Shadow:
+      type: object
+      description: 'Ombra o glow del testo. `offset {0,0}` + `blur` alto = effetto **glow/neon**;
+
+        offset valorizzato + `blur` basso = ombra portata.
+
+        '
+      properties:
+        color:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#000000'
+        offset:
+          type: object
+          description: Spostamento dell'ombra in px (può essere negativo).
+          properties:
+            x:
+              type: integer
+              default: 4
+            y:
+              type: integer
+              default: 4
+        blur:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Raggio di sfocatura gaussiana (0 = ombra netta; alto = glow).
+        opacity:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 1
     BackgroundLayer:
       type: object
       required:
@@ -456,6 +510,8 @@ components:
           $ref: '#/components/schemas/Stroke'
         box:
           $ref: '#/components/schemas/Box'
+        shadow:
+          $ref: '#/components/schemas/Shadow'
     ImageLayer:
       type: object
       required:
@@ -541,6 +597,37 @@ components:
             type: string
           example:
           - 'font ''MioFont.ttf'' non trovato: usato il default Pillow'
+    FontInfo:
+      type: object
+      description: Font disponibile per la generazione (caricato su source).
+      required:
+      - id
+      - name
+      - filename
+      - media_type
+      properties:
+        id:
+          type: integer
+          example: 42
+        name:
+          type: string
+          description: Nome leggibile (title del media).
+          example: Montserrat Black
+        filename:
+          type: string
+          example: montserrat-black.ttf
+        media_type:
+          type: string
+          enum:
+          - font/ttf
+          - font/otf
+          example: font/ttf
+        size_bytes:
+          type: integer
+          nullable: true
+        created_at_s:
+          type: integer
+          example: 1700000000
     Error:
       type: object
       properties:

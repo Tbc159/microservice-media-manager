@@ -213,6 +213,19 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
   `montserrat bold`. In caso di più match vince il più recente.
 - Test: +4 (mock + sqlite + service + integration), suite a **121**.
 
+## 16. Catalogo font, kit e ombra/glow del testo (2026-06-30)
+
+- **`content`**: nuovo `GET /v0/content/fonts` — catalogo dei font (`font/*`) caricati su `source`,
+  referenziabili nei layer `text`/`copertina` per id o nome. Risposta `FontInfo[]`.
+- **Kit font** consigliato (free/Google Fonts): Montserrat (Black/ExtraBold/Bold/Regular),
+  Bebas Neue, Great Vibes, Pacifico — copre lo stile dei canali; si caricano via `from-url`.
+- **`composita` testo**: nuovo `shadow {color, offset{x,y}, blur, opacity}` sui layer `text` —
+  ombra portata o **glow/neon** (offset 0 + blur alto, es. "LIVE"). Implementato in
+  `layer_compositor` (Pillow `GaussianBlur`).
+- Test: +4 (compositor shadow, catalogo unit + integration), suite a **125**.
+- In sospeso/da approfondire: **preset di brand** (`report-live`/`report-talk`) come template
+  fissi, sul modello `copertina`/"21milioni" (in attesa dei dettagli).
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

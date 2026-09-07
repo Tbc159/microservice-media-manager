@@ -11,6 +11,10 @@ from src.domains.content.factory import build_image_service
 _service = build_image_service()
 
 
+def list_fonts():
+    return _service.list_fonts(), 200
+
+
 def generate_image(body: dict):
     try:
         item = _service.generate(body)

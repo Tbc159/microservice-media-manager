@@ -15,7 +15,7 @@ import logging
 import os
 from typing import List, Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from src.domains.content.services.copertina_renderer import FONT_EXTRABOLD, FONTS_DIR
 
@@ -140,6 +140,34 @@ def _render_image(canvas: Image.Image, layer: dict) -> Image.Image:
     return _composite_over(canvas, img, (x, y))
 
 
+def _draw_lines(draw, lines, widths, block_w, bx, by, line_h, align, font, fill, stroke_w, stroke_fill):
+    for i, line in enumerate(lines):
+        offset = {"center": (block_w - widths[i]) // 2, "right": block_w - widths[i]}.get(align, 0)
+        draw.text(
+            (bx + offset, by + i * line_h),
+            line,
+            font=font,
+            fill=fill,
+            stroke_width=stroke_w,
+            stroke_fill=stroke_fill,
+        )
+
+
+def _build_shadow(shadow, lines, widths, block_w, bx, by, line_h, align, font, stroke_w) -> Image.Image:
+    """Ombra/glow del testo: silhouette piena nel colore ombra, sfocata e con opacita'."""
+    color = _hex_to_rgb(shadow.get("color", "#000000"))
+    off = shadow.get("offset") or {}
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    _draw_lines(
+        ImageDraw.Draw(img), lines, widths, block_w,
+        bx + off.get("x", 4), by + off.get("y", 4), line_h, align, font, color, stroke_w, color,
+    )
+    blur = shadow.get("blur", 0)
+    if blur:
+        img = img.filter(ImageFilter.GaussianBlur(blur))
+    return _apply_opacity(img, shadow.get("opacity", 1))
+
+
 def _render_text(canvas: Image.Image, layer: dict, warnings: List[str]) -> Image.Image:
     font = _load_font(layer.get("font_bytes"), layer.get("font_size", 72), warnings)
     color = _hex_to_rgb(layer.get("color", "#ffffff"))
@@ -164,25 +192,24 @@ def _render_text(canvas: Image.Image, layer: dict, warnings: List[str]) -> Image
     box = layer.get("box")
     if box:
         pad = box.get("padding", 16)
-        radius = box.get("radius", 0)
         r, g, b = _hex_to_rgb(box["color"])
         alpha = int(255 * box.get("opacity", 1))
         odraw.rounded_rectangle(
             [bx - pad, by - pad, bx + block_w + pad, by + block_h + pad],
-            radius=radius,
+            radius=box.get("radius", 0),
             fill=(r, g, b, alpha),
         )
 
-    for i, line in enumerate(lines):
-        offset = {"center": (block_w - widths[i]) // 2, "right": block_w - widths[i]}.get(align, 0)
-        odraw.text(
-            (bx + offset, by + i * line_h),
-            line,
-            font=font,
-            fill=color,
-            stroke_width=stroke_w,
-            stroke_fill=stroke_fill,
+    # Ombra/glow: sotto al testo, sopra l'eventuale box.
+    shadow = layer.get("shadow")
+    if shadow:
+        overlay = Image.alpha_composite(
+            overlay,
+            _build_shadow(shadow, lines, widths, block_w, bx, by, line_h, align, font, stroke_w),
         )
+        odraw = ImageDraw.Draw(overlay)
+
+    _draw_lines(odraw, lines, widths, block_w, bx, by, line_h, align, font, color, stroke_w, stroke_fill)
     return Image.alpha_composite(canvas, overlay)
 
 

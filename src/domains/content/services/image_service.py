@@ -20,6 +20,26 @@ class ImageService:
     def __init__(self, gateway: SourceGateway) -> None:
         self._gw = gateway
 
+    _FONT_TYPES = ("font/ttf", "font/otf")
+
+    def list_fonts(self) -> list[dict]:
+        """Catalogo dei font disponibili (da source), ordinati per nome."""
+        items: list[dict] = []
+        for media_type in self._FONT_TYPES:
+            items.extend(self._gw.list_by_type(media_type))
+        fonts = [
+            {
+                "id": it["id"],
+                "name": it.get("title"),
+                "filename": it["filename"],
+                "media_type": it["media_type"],
+                "size_bytes": it.get("size_bytes"),
+                "created_at_s": it["created_at_s"],
+            }
+            for it in items
+        ]
+        return sorted(fonts, key=lambda f: (f["name"] or f["filename"]).lower())
+
     def generate(self, body: dict) -> dict:
         """Genera l'immagine richiesta dal `tipo` e restituisce il DTO GeneratedImage.
 

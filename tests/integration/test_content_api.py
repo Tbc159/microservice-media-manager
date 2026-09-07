@@ -33,6 +33,12 @@ class _FakeGateway:
     def get_bytes(self, media_id):
         return _LOGO if media_id in (10, 50) else None
 
+    def list_by_type(self, media_type, page_size=100):
+        if media_type == "font/ttf":
+            return [{"id": 70, "title": "Montserrat Black", "filename": "montserrat-black.ttf",
+                     "media_type": "font/ttf", "size_bytes": 100, "created_at_s": 1700000000}]
+        return []
+
     def upload_image(self, *, title, media_type, filename, data):
         return UploadResult(
             201,
@@ -60,6 +66,17 @@ def client(monkeypatch):
 
 def test_health(client):
     assert client.get("/v0/content/health").json() == {"status": "ok"}
+
+
+def test_list_fonts(client):
+    r = client.get("/v0/content/fonts", headers=_KEY)
+    assert r.status_code == 200
+    fonts = r.json()
+    assert any(f["name"] == "Montserrat Black" and f["media_type"] == "font/ttf" for f in fonts)
+
+
+def test_list_fonts_requires_key(client):
+    assert client.get("/v0/content/fonts").status_code == 401
 
 
 def test_requires_api_key(client):
