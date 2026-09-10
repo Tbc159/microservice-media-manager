@@ -28,6 +28,7 @@ Endpoint (specchio di `source`, sul path pubblico):
 | `GET /v0/media/{id}` | metadati del singolo media |
 | `GET /v0/media/{id}/content[?download=1]` | byte: inline (play) o allegato (download) |
 | `POST /v0/media` | upload (multipart, delegato a source) |
+| `POST /v0/media/from-url` | crea un media scaricando un URL lato server (difese SSRF; delega a source) |
 
 > **`media_type` — MIME e normalizzazione.** L'enum di **upload** accetta `audio/m4a`, `audio/mpeg`,
 > `audio/mp3` (**alias legacy** di `audio/mpeg`, normalizzato: archiviato e filtrabile come
@@ -47,6 +48,36 @@ Il gateway usa **HTTP diretto** (httpx) sulla rete docker, non l'SDK generato (i
 
 > Evoluzione: `media` potrà arricchire i metadati con la propria business logic (es. pubblicazione)
 > oltre ai dati grezzi di `source`.
+
+### `POST /v0/media/from-url`
+Crea un media **scaricandolo lato server** da un URL, così il client (es. un browser che tiene i file
+su Blossom, archivio a contenuto indirizzato per hash) evita il doppio transito
+download + re-upload di file grandi. Protetto (`X-API-Key`). Body JSON:
+`{ url, title, media_type?, duration_s? }`. Il server scarica i byte e **delega la creazione a
+source** (`POST /source/media`, stesso storage e stessa dedup dell'upload multipart).
+
+- **`media_type`**: opzionale. Se assente è **dedotto dal `Content-Type`** della risposta. Se il tipo
+  (fornito o rilevato) non è fra quelli accettati → **`400`** che indica il tipo rilevato (non un `500`).
+- **Difese SSRF** (l'URL è esterno, `src/domains/media/fetcher.py`): solo **http/https**; l'host non
+  deve risolvere su indirizzi **privati/loopback/link-local/riservati** (blocca la rete interna e il
+  metadata endpoint `169.254.169.254`); **limite di dimensione** (`413`), **timeout** e **max N
+  redirect rivalidati a ogni hop** (`502`). Configurabili: `MEDIA_FETCH_MAX_BYTES`,
+  `MEDIA_FETCH_TIMEOUT`, `MEDIA_FETCH_MAX_REDIRECTS`.
+- **Filename**: dedotto dal path dell'URL (per Blossom = l'hash) → stesso contenuto ⇒ stesso
+  `object_key` ⇒ **`409`** come `POST /v0/media`, così il client riusa il record invece di trattarlo
+  come errore.
+
+| Esito | Codice |
+|-------|--------|
+| Creato | `201` → `MediaItem` (URL su `/v0/media`) |
+| URL non consentito (schema/host non pubblico) o `media_type` non accettato | `400` |
+| Contenuto già presente | `409` |
+| Oltre il limite di dimensione | `413` |
+| Download fallito (irraggiungibile, errore remoto, troppi redirect) | `502` |
+
+> Nota SSRF: il controllo DNS e la connessione sono in momenti distinti (finestra di DNS-rebinding).
+> La rivalidazione a ogni redirect e un solo host per richiesta riducono il rischio; il pinning
+> sull'IP validato è l'irrigidimento successivo se servisse.
 
 ---
 

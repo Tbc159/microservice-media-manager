@@ -8,7 +8,9 @@ from typing import Optional
 
 import flask
 
+from src.domains.media import fetcher
 from src.domains.media.factory import build_media_service
+from src.domains.media.services.media_service import MediaTypeNotAccepted
 
 _service = build_media_service()
 
@@ -72,4 +74,26 @@ def upload_media(body: dict, file):
         data=file.read(),
         duration_s=body.get("duration_s"),
     )
+    return result.payload, result.status_code
+
+
+def upload_media_from_url(body: dict):
+    """Crea un media scaricando `url` lato server (difese SSRF), delegando a source.
+    URL non consentito / tipo non accettato -> 400; oltre limite -> 413; fetch fallito -> 502;
+    duplicato -> 409 (come POST /media)."""
+    try:
+        result = _service.upload_from_url(
+            url=body["url"],
+            title=body["title"],
+            media_type=body.get("media_type"),
+            duration_s=body.get("duration_s"),
+        )
+    except fetcher.UrlNotAllowed as exc:
+        return {"detail": f"URL non consentito: {exc}"}, 400
+    except MediaTypeNotAccepted as exc:
+        return {"detail": f"media_type non accettato: rilevato '{exc.detected}'"}, 400
+    except fetcher.ContentTooLarge as exc:
+        return {"detail": f"contenuto troppo grande: {exc}"}, 413
+    except fetcher.FetchFailed as exc:
+        return {"detail": f"download fallito: {exc}"}, 502
     return result.payload, result.status_code

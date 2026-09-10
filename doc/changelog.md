@@ -249,6 +249,32 @@ errori che ne derivano diagnosticabili (spunto: un client aveva usato `title` al
 - Test: +12, suite a **137**. *In sospeso*: se aggiungere `font/ttf`/`font/otf` all'enum pubblico di
   `media` (contrasta con la decisione precedente "font solo dalla rete interna") — da confermare.
 
+## 18. CORS domini pubblici + HTTPS del reverse-proxy (2026-09-10)
+
+Rende `media` e `content` chiamabili da un'app web su altra origine, senza esporre `source`.
+
+- **CORS nell'app** (`src/cors.py`), non in nginx (sede unica → niente header duplicati; preflight
+  testabile). Middleware ASGI outermost sui soli path pubblici: `OPTIONS` → `204` con
+  `Access-Control-Allow-Origin` (origine riecheggiata, mai `*`), `-Headers: content-type, x-api-key`,
+  `-Methods: GET, POST, OPTIONS`, `-Max-Age`. Origini da `CORS_ALLOW_ORIGINS` (vuoto → off).
+  `source` escluso. Contract test `tests/contract/test_cors_preflight.py`.
+- **HTTPS proxy** opt-in (`PROXY_TLS=1`, Let's Encrypt via DuckDNS DNS-01): server `:443` + redirect
+  `:80→443` (path ACME per i rinnovi); `nginx -t` ok. Compose monta certs e pubblica `443`. Runbook in
+  `deploy/README.md`. Certificati gitignored.
+
+## 19. `POST /v0/media/from-url` (download server-side con difese SSRF) (2026-09-10)
+
+Espone nel BFF pubblico l'upload da URL: il server scarica il contenuto e delega la creazione a
+`source`, evitando al client (file su Blossom) il doppio transito download + re-upload.
+
+- Body `{ url, title, media_type?, duration_s? }`. `media_type` assente → **dedotto dal Content-Type**;
+  tipo non accettato → **`400` col tipo rilevato** (mai `500`).
+- **Difese SSRF** (`src/domains/media/fetcher.py`): solo http/https; blocco IP
+  privati/loopback/link-local/riservati (incl. metadata `169.254.169.254`); limite dimensione (`413`),
+  timeout e max N redirect **rivalidati a ogni hop** (`502`). Env: `MEDIA_FETCH_MAX_BYTES/_TIMEOUT/_MAX_REDIRECTS`.
+- Duplicato → **`409`** (filename dedotto dall'URL = hash Blossom → dedup su `object_key`).
+- Test: URL valido, tipo non accettato, rete privata, oltre limite, duplicato + unit SSRF. Suite a **175**.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

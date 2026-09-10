@@ -126,6 +126,82 @@ paths:
               schema:
                 $ref: '../shared/components.yaml#/components/schemas/Error'
 
+  /media/from-url:
+    post:
+      operationId: upload_media_from_url
+      tags: [media]
+      summary: Crea un media scaricandolo da un URL (server-side)
+      description: |
+        Il server scarica il contenuto da `url` e crea il media (delegando l'archiviazione a
+        source), evitando al client il doppio transito (download + re-upload) di file grandi.
+        Pensato per gli URL pubblici di Blossom (archivio a contenuto indirizzato per hash).
+
+        - `media_type` opzionale: se assente e' **ricavato dal Content-Type** della risposta; se il
+          tipo (fornito o rilevato) non e' fra quelli accettati -> `400` indicando il tipo rilevato.
+        - **Difese SSRF** (l'URL arriva dall'esterno): solo http/https; host che risolve su rete
+          privata/loopback/link-local -> `400`; limite di dimensione (`413`); timeout e numero
+          massimo di redirect (rivalidati) -> `502`.
+        - Contenuto gia' presente -> `409` (come `POST /v0/media`): il client riusa il record.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, title]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: URL http/https da cui scaricare il contenuto.
+                  example: "https://blossom.example/ab12cd34ef56.png"
+                title:
+                  type: string
+                  example: "Copertina puntata 42"
+                media_type:
+                  type: string
+                  description: MIME atteso. Se omesso, dedotto dal Content-Type della risposta.
+                  enum: [audio/m4a, audio/mpeg, audio/mp3, audio/wav, video/mp4, image/png, image/jpeg, image/webp]
+                  example: image/png
+                duration_s:
+                  type: integer
+                  nullable: true
+      responses:
+        '201':
+          description: Media creato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaItem'
+        '400':
+          description: |
+            Richiesta non valida: URL non consentito (schema/host non pubblico) oppure
+            `media_type` (fornito o rilevato) fuori dai tipi accettati.
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+        '409':
+          description: Media gia' presente
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+        '413':
+          description: Contenuto oltre il limite di dimensione consentito
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+        '502':
+          description: Download fallito (URL irraggiungibile, errore remoto o troppi redirect)
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+
   /media/{id}:
     get:
       operationId: get_media
