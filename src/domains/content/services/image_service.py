@@ -10,6 +10,7 @@ da `presets.py` e passano dallo stesso motore: un solo percorso di codice.
 import uuid
 from typing import List, Optional
 
+from src import signed_url
 from src.domains.content.errors import AssetNotFound, TipoNonImplementato
 from src.domains.content.gateway import SourceGateway
 from src.domains.content.services import copertina_renderer, layer_compositor, presets
@@ -216,7 +217,9 @@ class ImageService:
     def _to_generated(source_payload: dict, *, tipo: str, formato: str) -> dict:
         media_id = source_payload["id"]
         content_url = f"{_MEDIA_PREFIX}{media_id}/content"
-        return {
+        # L'immagine appena generata di solito va mostrata subito: l'URL firmato evita al client
+        # un giro in piu' su GET /v0/media/{id} solo per poterla mettere in un <img src>.
+        return signed_url.decorate({
             "id": media_id,
             "tipo": tipo,
             "media_type": source_payload.get("media_type", formato),
@@ -224,4 +227,4 @@ class ImageService:
             "created_at_s": source_payload["created_at_s"],
             "content_url": content_url,
             "download_url": f"{content_url}?download=1",
-        }
+        }, media_id)

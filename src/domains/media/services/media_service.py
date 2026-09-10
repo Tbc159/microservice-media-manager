@@ -8,6 +8,7 @@ import os
 from typing import Optional
 from urllib.parse import unquote, urlparse
 
+from src import signed_url
 from src.domains.media import fetcher
 from src.domains.media.gateway import ContentResult, SourceGateway, UploadResult
 
@@ -36,12 +37,15 @@ def _filename_from_url(url: str) -> str:
 
 
 def _remap(item: dict) -> dict:
-    """Riscrive content_url/download_url dal path interno (source) a quello pubblico (media)."""
+    """Riscrive content_url/download_url dal path interno (source) a quello pubblico (media)
+    e allega l'URL firmato per i tag del browser (assente se la firma non e' configurata)."""
     out = dict(item)
     for key in ("content_url", "download_url"):
         value = out.get(key)
         if isinstance(value, str):
             out[key] = value.replace(_SOURCE_PREFIX, _MEDIA_PREFIX)
+    if "id" in out:
+        signed_url.decorate(out, out["id"])
     return out
 
 

@@ -213,3 +213,17 @@ def test_missing_required_field_is_422_or_400(client):
         headers=_KEY,
     )
     assert r.status_code in (400, 422)
+
+
+def test_generated_image_carries_a_signed_url(client, monkeypatch):
+    """L'immagine appena generata si mostra in un <img> senza un giro extra su GET /v0/media."""
+    monkeypatch.setenv("MEDIA_URL_SIGNING_KEY", "chiave-di-test")
+    r = client.post(
+        "/v0/content/image",
+        json={"tipo": "slide", "titolo": "Bitcoin è denaro"},
+        headers=_KEY,
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["signed_url"].startswith(f"/v0/media/{body['id']}/content?token=")
+    assert body["signed_url_expires_at_s"] > 0

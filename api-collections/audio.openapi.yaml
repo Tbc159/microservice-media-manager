@@ -531,6 +531,18 @@ components:
         download_url:
           type: string
           example: /v0/media/101/content?download=1
+        signed_url:
+          type: string
+          description: 'URL dei byte **senza header**: token firmato, legato a questo media, in sola lettura
+
+            e a scadenza. E'' il campo da usare in `<img src>`/`<audio src>`/`<video src>`.
+
+            Assente se l''ambiente non ha una chiave di firma configurata.
+
+            '
+        signed_url_expires_at_s:
+          type: integer
+          description: Scadenza di `signed_url` (epoch, secondi).
     AudioAnalysis:
       type: object
       description: Misure EBU R128 + rumore di fondo + distribuzione dei silenzi. Associata al media.

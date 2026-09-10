@@ -234,8 +234,17 @@ paths:
       description: |
         Default inline; `?download=1|true|yes|on` -> allegato. media propaga il `302` di
         source verso lo storage in coll/prod (resta fuori dai byte); in dev relaia i byte.
+
+        **Due modi di autenticarsi, in alternativa** (e' l'unica rotta con l'URL firmato):
+        - `X-API-Key` in header — i client server-side;
+        - `?token=<signed_url>` in query — i tag del browser (`<img>`/`<audio>`/`<video>`), che
+          non possono mandare header. Il token si legge dal campo `signed_url` di `MediaItem`
+          (`GET /media` o `GET /media/{id}`, che richiedono la chiave): vale solo per **quel**
+          media, in sola lettura, fino a `signed_url_expires_at_s`. `?download=1` si puo'
+          aggiungere all'URL firmato senza rifirmarlo.
       security:
         - ApiKeyAuth: []
+        - SignedUrlAuth: []
       parameters:
         - name: id
           in: path
@@ -250,6 +259,14 @@ paths:
           schema:
             type: string
             example: "1"
+        - name: token
+          in: query
+          required: false
+          description: |
+            Token dell'URL firmato (schema `SignedUrlAuth`). Alternativo a `X-API-Key`; ignorato
+            se la chiave e' presente. Non valido o scaduto -> `401`.
+          schema:
+            type: string
       responses:
         '200':
           description: Byte del file (relay da source in dev); supporta Range
@@ -286,6 +303,8 @@ components:
   securitySchemes:
     ApiKeyAuth:
       $ref: '../shared/components.yaml#/components/securitySchemes/ApiKeyAuth'
+    SignedUrlAuth:
+      $ref: '../shared/components.yaml#/components/securitySchemes/SignedUrlAuth'
   schemas:
     MediaItem:
       type: object
@@ -323,6 +342,24 @@ components:
           type: string
           description: URL (relativo) dei byte come allegato.
           example: "/v0/media/1/content?download=1"
+        signed_url:
+          type: string
+          description: |
+            URL (relativo) dei byte **utilizzabile senza header**: porta un token firmato e a
+            scadenza valido solo per questo media, in sola lettura. E' il campo da mettere in
+            `<img src>`/`<audio src>`/`<video src>` — `content_url` li' riceverebbe `401`,
+            perche' il browser non allega header alle richieste di sotto-risorsa.
+
+            Aggiungendo `&download=1` si ottiene l'allegato, senza rifirmare. **Assente** se
+            l'ambiente non ha una chiave di firma configurata: in quel caso resta `content_url`
+            con `X-API-Key`.
+          example: "/v0/media/1/content?token=v1.1757600000.3QK9x1Yb0m..."
+        signed_url_expires_at_s:
+          type: integer
+          description: |
+            Scadenza di `signed_url` (epoch, secondi). Oltre questo istante l'URL risponde `401`:
+            il client rilegge il media per ottenerne uno nuovo.
+          example: 1757600000
         metadata:
           type: object
           nullable: true

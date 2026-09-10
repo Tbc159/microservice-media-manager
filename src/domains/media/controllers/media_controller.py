@@ -35,7 +35,9 @@ def get_media(id: int):
     return (item, 200) if item is not None else ("", 404)
 
 
-def get_media_content(id: int, download: Optional[str] = None):
+def get_media_content(id: int, download: Optional[str] = None, token: Optional[str] = None):
+    # `token` e' consumato dal security handler (SignedUrlAuth): qui va solo dichiarato, perche'
+    # con strict_validation un parametro di query non dichiarato farebbe fallire la richiesta.
     req = flask.request
     is_head = req.method == "HEAD"
     result = _service.content(

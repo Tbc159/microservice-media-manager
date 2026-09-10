@@ -49,6 +49,62 @@ Il gateway usa **HTTP diretto** (httpx) sulla rete docker, non l'SDK generato (i
 > Evoluzione: `media` potrà arricchire i metadati con la propria business logic (es. pubblicazione)
 > oltre ai dati grezzi di `source`.
 
+### URL di lettura firmati (`signed_url`) — il caso `<img src>`
+
+**Il problema.** `GET /v0/media/{id}/content` richiede `X-API-Key` in un **header**, ma il browser
+non allega header alle richieste di **sotto-risorsa**: `<img src="…/content">`, `<audio src>` e
+`<video src>` ricevono `401`. Il front-end può aggirarlo con `fetch` + `URL.createObjectURL`, e
+funziona, ma tiene il file **in memoria** e rinuncia alla **cache HTTP** e allo streaming con
+`Range` (niente seek su audio/video lunghi).
+
+**La soluzione.** Accanto a `content_url` (autenticato) le risposte portano `signed_url`: lo stesso
+URL con un token in query string, che `GET /media/{id}/content` accetta **in alternativa** alla
+chiave (`security: [ApiKeyAuth] OR [SignedUrlAuth]` nel contratto).
+
+| Campo | Cosa contiene |
+|---|---|
+| `content_url` | URL dei byte, richiede `X-API-Key`. Per i client server-side. |
+| `signed_url` | Stesso URL + `?token=…`: **niente header**. Per i tag del browser. |
+| `signed_url_expires_at_s` | Scadenza del token (epoch). Passata: `401`, si rilegge il media. |
+
+Il token è un **HMAC-SHA256 su `(id, scadenza)`** e vale:
+
+- **solo per quel media** — l'id entra nella *firma*, quindi spostare il token su un altro id la
+  invalida. Non è un controllo che si può dimenticare in un `if`: è il calcolo stesso;
+- **solo in lettura** — nessun'altra rotta dichiara `SignedUrlAuth`;
+- **solo fino alla scadenza** — `MEDIA_URL_TTL_S`, default **900 s**, limitata a [30 s, 24 h].
+
+`&download=1` si aggiunge all'URL firmato **senza rifirmarlo** (la firma copre id e scadenza, non
+gli altri parametri). `signed_url` compare anche nella risposta di `POST /v0/content/image`
+(l'immagine appena generata si mostra subito) e nei media prodotti dai job `audio`.
+
+> **I byte non diventano pubblici per default.** Senza `MEDIA_URL_SIGNING_KEY` la firma è **spenta**:
+> i campi non compaiono e **nessun** token è accettato (*fail-closed*). Per ottenere un `signed_url`
+> serve comunque la chiave API: l'URL firmato è un permesso ristretto che la chiave *emette*, non
+> un'alternativa ad essa.
+
+**Limite noto**: un token non è revocabile singolarmente (è stateless). Le leve sono la scadenza
+breve e la **rotazione di `MEDIA_URL_SIGNING_KEY`**, che invalida in blocco tutti i token emessi.
+Chi ha in mano l'URL può rileggere quel media fino alla scadenza: è la stessa proprietà degli URL
+pre-firmati di S3/MinIO, e va tenuta presente prima di incollare un `signed_url` in un canale
+condiviso. Conseguenza operativa: il token finisce negli **access log** di nginx (che registrano la
+query string) — se i log vengono conservati o spediti altrove, contengono permessi di lettura validi
+fino alla loro scadenza.
+
+**Configurazione** (dominio `media`, più `content` e `audio` che emettono URL firmati):
+
+| Variabile | Dove | Effetto |
+|---|---|---|
+| `MEDIA_URL_SIGNING_KEY` | **secret** dell'Environment | Assente → firma spenta. Ruotarla invalida tutti i token. |
+| `MEDIA_URL_TTL_S` | `vars` dell'Environment | Durata del token in secondi (default 900). |
+
+```js
+// client: leggi il media una volta, poi usa signed_url nel DOM
+const m = await (await fetch(`/v0/media/${id}`, {headers: {'X-API-Key': key}})).json();
+img.src = m.signed_url;                       // niente fetch dei byte, niente object URL
+// prima di signed_url_expires_at_s, rileggi il media per un URL fresco
+```
+
 ### `POST /v0/media/from-url`
 Crea un media **scaricandolo lato server** da un URL, così il client (es. un browser che tiene i file
 su Blossom, archivio a contenuto indirizzato per hash) evita il doppio transito

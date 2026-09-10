@@ -11,6 +11,7 @@ import logging
 import os
 import tempfile
 
+from src import signed_url
 from src.domains.audio.errors import FormatNotSupported, RefNotResolved
 from src.domains.audio.naming import output_filename
 from src.domains.audio.processors import ffmpeg_processor as fp
@@ -129,8 +130,9 @@ class Worker:
             )
         p = result.payload
         mid = p["id"]
-        return {
+        # Il client riproduce l'output in un <audio src>: senza URL firmato riceverebbe 401.
+        return signed_url.decorate({
             "id": mid, "media_type": p.get("media_type", out_fmt),
             "content_url": f"/v0/media/{mid}/content",
             "download_url": f"/v0/media/{mid}/content?download=1",
-        }
+        }, mid)

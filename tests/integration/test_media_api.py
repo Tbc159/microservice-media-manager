@@ -150,3 +150,73 @@ def test_upload_delegated(client):
     )
     assert r.status_code == 201
     assert r.json()["content_url"] == "/v0/media/9/content"
+
+
+# ── URL firmato: il caso <img src> (nessun header) ─────────────────────────────
+
+@pytest.fixture()
+def signed_client(monkeypatch):
+    """Come `client`, ma con la firma degli URL configurata."""
+    monkeypatch.setenv("MEDIA_URL_SIGNING_KEY", "chiave-di-test")
+    monkeypatch.delenv("MEDIA_URL_TTL_S", raising=False)
+    monkeypatch.delenv("API_KEY", raising=False)
+    from src.app import create_app
+    from src.domains.media.services.media_service import MediaService
+
+    app = create_app(domains=["media"])
+    import src.domains.media.controllers.media_controller as mc
+
+    mc._service = MediaService(_FakeGateway())
+    return app.test_client()
+
+
+def test_signed_url_absent_without_signing_key(client):
+    """Fail-closed: senza chiave di firma il campo non compare e i byte restano dietro l'header."""
+    item = client.get("/v0/media/1", headers=_KEY).json()
+    assert "signed_url" not in item
+    assert client.get("/v0/media/1/content").status_code == 401
+
+
+def test_signed_url_lets_the_browser_read_the_bytes_without_headers(signed_client):
+    item = signed_client.get("/v0/media/1", headers=_KEY).json()
+    assert item["signed_url"].startswith("/v0/media/1/content?token=")
+    assert item["signed_url_expires_at_s"] > 0
+    # <img src="..."> : nessun header, deve arrivare ai byte
+    r = signed_client.get(item["signed_url"])
+    assert r.status_code == 200 and r.content == b"BYTES"
+
+
+def test_signed_url_still_401_without_token(signed_client):
+    assert signed_client.get("/v0/media/1/content").status_code == 401
+    assert signed_client.get("/v0/media/1/content?token=v1.99999999999.x").status_code == 401
+
+
+def test_signed_url_of_one_media_does_not_open_another(signed_client):
+    """Il token e' legato al suo id dalla firma: riusarlo su un altro media non passa."""
+    token = signed_client.get("/v0/media/1", headers=_KEY).json()["signed_url"].split("token=")[1]
+    assert signed_client.get(f"/v0/media/2/content?token={token}").status_code == 401
+
+
+def test_signed_url_accepts_download_without_resigning(signed_client):
+    signed = signed_client.get("/v0/media/1", headers=_KEY).json()["signed_url"]
+    r = signed_client.get(f"{signed}&download=1")
+    assert r.status_code == 200
+    assert "attachment" in r.headers["Content-Disposition"]
+
+
+def test_expired_token_is_rejected(signed_client, monkeypatch):
+    signed = signed_client.get("/v0/media/1", headers=_KEY).json()["signed_url"]
+    monkeypatch.setattr("src.signed_url.time.time", lambda: 4102444800)  # 2100-01-01
+    assert signed_client.get(signed).status_code == 401
+
+
+def test_list_also_carries_signed_urls(signed_client):
+    item = signed_client.get("/v0/media", headers=_KEY).json()["items"][0]
+    assert item["signed_url"].startswith("/v0/media/1/content?token=")
+
+
+def test_signed_token_opens_only_the_bytes_route(signed_client):
+    """Sola lettura dei byte: il token non e' una chiave API ridotta, non apre altre rotte."""
+    token = signed_client.get("/v0/media/1", headers=_KEY).json()["signed_url"].split("token=")[1]
+    assert signed_client.get(f"/v0/media/1?token={token}").status_code == 401
+    assert signed_client.get(f"/v0/media?token={token}").status_code == 401

@@ -17,6 +17,10 @@ services:
       API_HOST: ${API_HOST:-}
       API_KEY: ${API_KEY:-}
       API_SECRET: ${API_SECRET:-}
+      # URL di lettura firmati (`signed_url`): senza questa chiave la firma resta SPENTA e i
+      # byte restano raggiungibili solo con X-API-Key. Segreto: sta nei secret dell'Environment.
+      MEDIA_URL_SIGNING_KEY: ${MEDIA_URL_SIGNING_KEY:-}
+      MEDIA_URL_TTL_S: ${MEDIA_URL_TTL_S:-}
       # CORS: origini web consentite (elenco separato da virgola). Vuoto -> CORS off.
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
     env_file:

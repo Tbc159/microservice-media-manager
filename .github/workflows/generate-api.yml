@@ -120,6 +120,10 @@ jobs:
       API_HOST: ${{ secrets.API_HOST }}
       API_KEY: ${{ secrets.API_KEY }}
       API_SECRET: ${{ secrets.API_SECRET }}
+      # Firma degli URL di lettura (`signed_url`). Secret ASSENTE -> firma spenta, i byte
+      # restano dietro X-API-Key: nessun ambiente diventa pubblico per distrazione.
+      MEDIA_URL_SIGNING_KEY: ${{ secrets.MEDIA_URL_SIGNING_KEY }}
+      MEDIA_URL_TTL_S: ${{ vars.MEDIA_URL_TTL_S || '' }}
       # Object storage (coll/prod). In staging non usato: STORAGE_BACKEND=local.
       STORAGE_ACCESS_KEY: ${{ secrets.STORAGE_ACCESS_KEY }}
       STORAGE_SECRET_KEY: ${{ secrets.STORAGE_SECRET_KEY }}

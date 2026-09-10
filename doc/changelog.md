@@ -323,6 +323,29 @@ che espande i campi nei **layer** del motore esistente.
 - **Contratto**: `SlideRequest` nuovo, `SocialRequest` non piu' draft, `slide` nel `discriminator` e
   in `GeneratedImage.tipo`. Il `501` resta come contratto per i tipi futuri.
 
+## 22. URL di lettura firmati (`signed_url`) per i tag del browser (2026-09-10)
+
+`GET /v0/media/{id}/content` vuole `X-API-Key` in un header, ma il browser non allega header alle
+richieste di sotto-risorsa: ogni `<img src>`/`<audio src>`/`<video src>` prendeva `401` e il
+front-end doveva scaricare i byte con `fetch` e costruire un object URL — file in memoria, niente
+cache HTTP, niente `Range`.
+
+- **`src/signed_url.py`**: token HMAC-SHA256 su `(id, scadenza)` in query string. Legato a **quel**
+  media (l'id e' dentro la firma: riusarlo altrove la invalida), in **sola lettura**, con
+  **scadenza** (`MEDIA_URL_TTL_S`, default 900 s, limitata a [30 s, 24 h]).
+- **Contratto**: nuovo schema `SignedUrlAuth` (`apiKey` in query) condiviso; su
+  `GET /media/{id}/content` la security diventa `ApiKeyAuth` **oppure** `SignedUrlAuth` (connexion
+  valuta le alternative in OR e passa la request al verificatore, cosi' il legame con l'id e'
+  crittografico e non un confronto nel controller).
+- **Risposte**: `MediaItem`, `GeneratedImage` e i media prodotti dai job `audio` portano
+  `signed_url` + `signed_url_expires_at_s` accanto a `content_url`. `&download=1` funziona
+  sull'URL firmato senza rifirmarlo.
+- **Fail-closed**: senza `MEDIA_URL_SIGNING_KEY` la firma e' spenta — i campi non compaiono e
+  nessun token e' accettato. I byte non diventano pubblici per default, e per *ottenere* un URL
+  firmato serve comunque la chiave API.
+- **Deploy**: chiave come **secret** dell'Environment (`MEDIA_URL_SIGNING_KEY`), TTL come `vars`;
+  propagate ai compose di `media`, `content` e `audio`.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

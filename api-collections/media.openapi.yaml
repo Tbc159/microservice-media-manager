@@ -278,13 +278,17 @@ paths:
       tags:
       - media
       summary: Byte del media (play inline o download)
-      description: 'Default inline; `?download=1|true|yes|on` -> allegato. media propaga il `302` di
-
-        source verso lo storage in coll/prod (resta fuori dai byte); in dev relaia i byte.
-
-        '
+      description: "Default inline; `?download=1|true|yes|on` -> allegato. media propaga il `302` di\n\
+        source verso lo storage in coll/prod (resta fuori dai byte); in dev relaia i byte.\n\n**Due modi\
+        \ di autenticarsi, in alternativa** (e' l'unica rotta con l'URL firmato):\n- `X-API-Key` in header\
+        \ — i client server-side;\n- `?token=<signed_url>` in query — i tag del browser (`<img>`/`<audio>`/`<video>`),\
+        \ che\n  non possono mandare header. Il token si legge dal campo `signed_url` di `MediaItem`\n\
+        \  (`GET /media` o `GET /media/{id}`, che richiedono la chiave): vale solo per **quel**\n  media,\
+        \ in sola lettura, fino a `signed_url_expires_at_s`. `?download=1` si puo'\n  aggiungere all'URL\
+        \ firmato senza rifirmarlo.\n"
       security:
       - ApiKeyAuth: []
+      - SignedUrlAuth: []
       parameters:
       - name: id
         in: path
@@ -299,6 +303,16 @@ paths:
         schema:
           type: string
           example: '1'
+      - name: token
+        in: query
+        required: false
+        description: 'Token dell''URL firmato (schema `SignedUrlAuth`). Alternativo a `X-API-Key`; ignorato
+
+          se la chiave e'' presente. Non valido o scaduto -> `401`.
+
+          '
+        schema:
+          type: string
       responses:
         '200':
           description: Byte del file (relay da source in dev); supporta Range
@@ -336,6 +350,35 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
+    SignedUrlAuth:
+      type: apiKey
+      in: query
+      name: token
+      description: 'Token di lettura **firmato e a scadenza** per un singolo media, alternativo a
+
+        `X-API-Key` sulla sola rotta dei byte (`GET /media/{id}/content`).
+
+
+        Serve ai tag del browser (`<img src>`, `<audio src>`, `<video src>`): le richieste di
+
+        sotto-risorsa **non portano header**, quindi con la sola chiave API riceverebbero `401`
+
+        e il front-end dovrebbe scaricare i byte via `fetch` tenendoli in memoria, senza cache
+
+        HTTP ne'' `Range`.
+
+
+        Il token e'' un HMAC su `(id, scadenza)`: vale **solo per quel media** (l''id e'' dentro la
+
+        firma: riusarlo altrove la invalida), **solo in lettura** e **solo fino alla scadenza**.
+
+        Si ottiene dai campi `signed_url`/`signed_url_expires_at_s` delle risposte, che
+
+        richiedono la chiave API: i byte non sono mai pubblici per default. Se l''ambiente non ha
+
+        una chiave di firma configurata i campi non compaiono e nessun token e'' accettato.
+
+        '
   schemas:
     MediaItem:
       type: object
@@ -384,6 +427,35 @@ components:
           type: string
           description: URL (relativo) dei byte come allegato.
           example: /v0/media/1/content?download=1
+        signed_url:
+          type: string
+          description: 'URL (relativo) dei byte **utilizzabile senza header**: porta un token firmato
+            e a
+
+            scadenza valido solo per questo media, in sola lettura. E'' il campo da mettere in
+
+            `<img src>`/`<audio src>`/`<video src>` — `content_url` li'' riceverebbe `401`,
+
+            perche'' il browser non allega header alle richieste di sotto-risorsa.
+
+
+            Aggiungendo `&download=1` si ottiene l''allegato, senza rifirmare. **Assente** se
+
+            l''ambiente non ha una chiave di firma configurata: in quel caso resta `content_url`
+
+            con `X-API-Key`.
+
+            '
+          example: /v0/media/1/content?token=v1.1757600000.3QK9x1Yb0m...
+        signed_url_expires_at_s:
+          type: integer
+          description: 'Scadenza di `signed_url` (epoch, secondi). Oltre questo istante l''URL risponde
+            `401`:
+
+            il client rilegge il media per ottenerne uno nuovo.
+
+            '
+          example: 1757600000
         metadata:
           type: object
           nullable: true
