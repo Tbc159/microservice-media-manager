@@ -1,0 +1,486 @@
+openapi: 3.0.3
+info:
+  title: Audio API
+  version: 0.1.0
+  description: |
+    Dominio "audio": **BFF pubblico** per l'elaborazione audio (normalizzazione voci,
+    accorciamento silenzi, conversione, analisi, split, concat). Porta qui le capacita' del
+    vecchio servizio `ffmpeg` di microservices-media, **senza** i suoi vincoli.
+
+    Principi:
+    - **Input = riferimento** a un media gia' in archivio (`MediaRef` = id o filename), risolto via
+      `source` — non un upload dentro l'operazione: la stessa sorgente si riusa fra piu' tentativi.
+    - **Ogni operazione produce un NUOVO media** e non distrugge l'ingresso (rifare con parametri
+      diversi non richiede ricaricare).
+    - **Ordine libero e formati indifferenti**: ogni operazione accetta lo stesso riferimento e lo
+      risolve allo stesso modo; niente cartelle-per-operazione, niente "solo mp3".
+    - **Intermedi senza perdita**: le fasi intermedie lavorano in WAV/FLAC; la compressione avviene
+      solo nel passaggio che produce il file consegnato (`format`).
+    - **Modello a job**: le lavorazioni sono lunghe -> `POST` risponde **202** con `job_id`, si segue
+      con `GET /audio/job/{id}`. I job sono **persistenti** (sopravvivono al riavvio del servizio).
+
+    base_path /v0 e' applicato da src/app.py. Dominio pubblico: CORS/HTTPS come media/content.
+servers:
+  - url: /v0
+    description: base path applicato da connexion
+
+paths:
+  /audio/health:
+    get:
+      operationId: get_health
+      tags: [audio]
+      summary: Health check del dominio audio
+      responses:
+        '200':
+          description: Servizio attivo
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Health'
+              example:
+                status: ok
+
+  /audio/normalize:
+    post:
+      operationId: normalize_audio
+      tags: [audio]
+      summary: Livella le voci (EBU R128) — job asincrono
+      description: |
+        Porta il parlato allo stesso livello percepito e a un target di loudness.
+        Catena: `dynaudnorm` (equalizzazione per-finestra) + `loudnorm` (target EBU R128).
+
+        `maxgain` e' il **tetto di correzione** di `dynaudnorm` (in dB = 20·log10(maxgain));
+        il default di ffmpeg (10 = +20 dB) e' troppo basso e lascia i parlanti disallineati:
+        qui il default e' alto. `two_pass` misura-poi-applica (piu' preciso, ma raddoppia il
+        tempo); una passata sola soddisfa gia' i target.
+
+        **Formati input**: `audio/m4a`, `audio/mpeg` (`audio/mp3` alias), `audio/wav`.
+        **Raccomandazione di qualita'**: eseguire **prima `silence`, poi `normalize`** — normalizzare
+        prima alza il rumore di fondo sopra la soglia di silenzio e il taglio non lo riconosce piu'.
+        L'ordine non e' imposto: e' una scelta di qualita'.
+
+        Limite noto: quando due voci si sovrappongono nello stesso canale nessuna tecnica le separa;
+        se esistono tracce separate per parlante, normalizzarle singolarmente prima del mix e' meglio.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source:
+                  $ref: '#/components/schemas/MediaRef'
+                maxgain:
+                  type: number
+                  minimum: 1
+                  default: 80
+                  description: Tetto di correzione di dynaudnorm (dB = 20·log10(maxgain)). Alto = allinea di piu' ma alza il fondo.
+                target_lufs:
+                  type: number
+                  default: -16
+                true_peak_dbtp:
+                  type: number
+                  default: -1.5
+                loudness_range:
+                  type: number
+                  default: 11
+                two_pass:
+                  type: boolean
+                  default: false
+                  description: loudnorm in due passate (misura poi applica, linear=true). Piu' preciso, piu' lento.
+                format:
+                  $ref: '#/components/schemas/OutputFormat'
+                title:
+                  type: string
+                  description: Titolo del media prodotto (default derivato dalla sorgente).
+      responses:
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '400':
+          $ref: '#/components/responses/BadRef'
+        '401':
+          description: Autenticazione mancante
+
+  /audio/silence:
+    post:
+      operationId: shorten_silence
+      tags: [audio]
+      summary: Accorcia i silenzi (incl. iniziale/finale) — job asincrono
+      description: |
+        Rimuove/accorcia i silenzi con `silenceremove`, lasciando **una pausa udibile**
+        (`keep_silence_s`, default 0.3 s) invece di azzerarli. Agisce anche sul **silenzio
+        iniziale** (se la prima voce inizia in ritardo, la traccia partira' subito dopo un
+        brevissimo silenzio) e su quello **finale**.
+
+        `threshold_db` e' la soglia (con unita' dB, es. -40); `min_pause_s` e' la pausa minima da
+        accorciare. **Formati input**: `audio/m4a`, `audio/mpeg`, `audio/wav` — **anche i wav**
+        (nessuna conversione preliminare a carico del chiamante). Output di default **senza perdita**
+        (`audio/wav`) perche' e' tipicamente un passaggio intermedio.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source:
+                  $ref: '#/components/schemas/MediaRef'
+                threshold_db:
+                  type: number
+                  default: -40
+                  description: Soglia di silenzio in dB (applicata come `<n>dB` a ffmpeg).
+                min_pause_s:
+                  type: number
+                  minimum: 0
+                  default: 1.0
+                  description: Durata minima di silenzio da accorciare (secondi).
+                keep_silence_s:
+                  type: number
+                  minimum: 0
+                  default: 0.3
+                  description: Silenzio da lasciare dopo l'accorciamento (secondi).
+                format:
+                  allOf:
+                    - $ref: '#/components/schemas/OutputFormat'
+                  default: audio/wav
+                title:
+                  type: string
+      responses:
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '400':
+          $ref: '#/components/responses/BadRef'
+        '401':
+          description: Autenticazione mancante
+
+  /audio/convert:
+    post:
+      operationId: convert_audio
+      tags: [audio]
+      summary: Cambia contenitore/codec — job asincrono
+      description: |
+        Converte l'audio nel formato `format` (sostituisce il vecchio `m4a_to_mp3`, ma generico).
+        **Formati input**: qualsiasi audio in archivio; **output**: `audio/mpeg`, `audio/m4a`,
+        `audio/wav`.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, format]
+              properties:
+                source:
+                  $ref: '#/components/schemas/MediaRef'
+                format:
+                  $ref: '#/components/schemas/OutputFormat'
+                title:
+                  type: string
+      responses:
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '400':
+          $ref: '#/components/responses/BadRef'
+        '401':
+          description: Autenticazione mancante
+
+  /audio/analyze:
+    post:
+      operationId: analyze_audio
+      tags: [audio]
+      summary: Misura l'audio senza modificarlo — job asincrono
+      description: |
+        Misura e **non modifica nulla**: loudness integrata (LUFS), true peak, loudness range,
+        **livello del rumore di fondo** e la distribuzione delle durate dei silenzi sopra alcune
+        soglie. Serve all'interfaccia per proporre soglie giuste *per quella registrazione* invece
+        di default alla cieca. Il risultato e' **associato al media** (riusabile), non ricalcolato
+        a ogni apertura. `GET /audio/job/{id}` restituisce l'analisi in `result.analysis`.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source:
+                  $ref: '#/components/schemas/MediaRef'
+                silence_thresholds_db:
+                  type: array
+                  items:
+                    type: number
+                  default: [-30, -40, -50]
+                  description: Soglie (dB) per cui riportare la distribuzione dei silenzi.
+      responses:
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '400':
+          $ref: '#/components/responses/BadRef'
+        '401':
+          description: Autenticazione mancante
+
+  /audio/split:
+    post:
+      operationId: split_audio
+      tags: [audio]
+      summary: Divide un episodio lungo in segmenti — job asincrono
+      description: |
+        Divide la sorgente in segmenti di `segment_seconds` secondi. Ogni segmento diventa un nuovo
+        media; `result.media` li elenca in ordine. Output di default senza perdita (`audio/wav`).
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, segment_seconds]
+              properties:
+                source:
+                  $ref: '#/components/schemas/MediaRef'
+                segment_seconds:
+                  type: integer
+                  minimum: 1
+                  description: Durata di ogni segmento (secondi).
+                format:
+                  allOf:
+                    - $ref: '#/components/schemas/OutputFormat'
+                  default: audio/wav
+                title:
+                  type: string
+      responses:
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '400':
+          $ref: '#/components/responses/BadRef'
+        '401':
+          description: Autenticazione mancante
+
+  /audio/concat:
+    post:
+      operationId: concat_audio
+      tags: [audio]
+      summary: Concatena piu' tracce (sigla + corpo + coda) — job asincrono
+      description: |
+        Concatena in ordine i media indicati in `sources` (>=2). La concatenazione avviene tramite
+        un intermedio senza perdita, poi codifica nel `format` scelto. Tutti i riferimenti sono
+        risolti come per le altre operazioni.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sources]
+              properties:
+                sources:
+                  type: array
+                  minItems: 2
+                  items:
+                    $ref: '#/components/schemas/MediaRef'
+                format:
+                  $ref: '#/components/schemas/OutputFormat'
+                title:
+                  type: string
+      responses:
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '400':
+          $ref: '#/components/responses/BadRef'
+        '401':
+          description: Autenticazione mancante
+
+  /audio/job/{id}:
+    get:
+      operationId: get_audio_job
+      tags: [audio]
+      summary: Stato di una lavorazione
+      description: |
+        Stato del job. `status`: `queued` -> `running` -> `succeeded`|`failed`. A `succeeded`,
+        `result` contiene i media prodotti (`result.media`) oppure l'analisi (`result.analysis`).
+        Il client puo' smettere di attendere e riprendere il polling in seguito (job persistente).
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: normalize-20260910-153000-a3f9
+      responses:
+        '200':
+          description: Stato del job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Job non trovato (nessun corpo)
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      $ref: '../shared/components.yaml#/components/securitySchemes/ApiKeyAuth'
+
+  responses:
+    JobAccepted:
+      description: Lavorazione accettata; seguire con GET /audio/job/{id}
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/JobAccepted'
+    BadRef:
+      description: |
+        Riferimento non risolto o formato non supportato. Il corpo indica **quale** campo e con
+        **quale criterio** e' stato cercato (`field`/`value`/`searched_by`).
+      content:
+        application/json:
+          schema:
+            $ref: '../shared/components.yaml#/components/schemas/Error'
+
+  schemas:
+    MediaRef:
+      description: |
+        Riferimento a un media in archivio: l'**id** intero oppure il **filename** (stringa,
+        generato dal servizio; NON il title). Risoluzione tollerante (case/estensione/separatore),
+        come nel dominio content.
+      oneOf:
+        - type: integer
+        - type: string
+      example: 12
+
+    OutputFormat:
+      type: string
+      description: Formato (MIME) del media prodotto. Solo formati audio comprimibili/lossless noti.
+      enum: [audio/mpeg, audio/m4a, audio/wav]
+      default: audio/mpeg
+
+    JobAccepted:
+      type: object
+      required: [job_id, status, op, poll_url]
+      properties:
+        job_id:
+          type: string
+          example: normalize-20260910-153000-a3f9
+        status:
+          type: string
+          enum: [queued]
+        op:
+          type: string
+          enum: [normalize, silence, convert, analyze, split, concat]
+        poll_url:
+          type: string
+          example: /v0/audio/job/normalize-20260910-153000-a3f9
+
+    Job:
+      type: object
+      required: [job_id, op, status, created_at_s, updated_at_s]
+      properties:
+        job_id:
+          type: string
+        op:
+          type: string
+          enum: [normalize, silence, convert, analyze, split, concat]
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        created_at_s:
+          type: integer
+        updated_at_s:
+          type: integer
+        result:
+          type: object
+          nullable: true
+          description: Presente a `succeeded`. `media` per le operazioni che producono file; `analysis` per analyze.
+          properties:
+            media:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProducedMedia'
+            analysis:
+              $ref: '#/components/schemas/AudioAnalysis'
+        error:
+          type: object
+          nullable: true
+          description: Presente a `failed`. Diagnostico (field/value/searched_by o messaggio ffmpeg).
+          properties:
+            detail:
+              type: string
+            field:
+              type: string
+            value: {}
+            searched_by:
+              type: string
+
+    ProducedMedia:
+      type: object
+      required: [id, media_type, content_url, download_url]
+      properties:
+        id:
+          type: integer
+          example: 101
+        media_type:
+          type: string
+          example: audio/mpeg
+        content_url:
+          type: string
+          example: /v0/media/101/content
+        download_url:
+          type: string
+          example: /v0/media/101/content?download=1
+
+    AudioAnalysis:
+      type: object
+      description: Misure EBU R128 + rumore di fondo + distribuzione dei silenzi. Associata al media.
+      required: [media_id, integrated_lufs, true_peak_dbtp, loudness_range_lu, noise_floor_lufs, silences]
+      properties:
+        media_id:
+          type: integer
+          example: 42
+        integrated_lufs:
+          type: number
+          example: -21.3
+        true_peak_dbtp:
+          type: number
+          example: -3.1
+        loudness_range_lu:
+          type: number
+          example: 8.4
+        noise_floor_lufs:
+          type: number
+          description: Livello del rumore di fondo (loudness dei tratti piu' quieti).
+          example: -58.0
+        silences:
+          type: array
+          description: Distribuzione delle durate dei silenzi per ciascuna soglia richiesta.
+          items:
+            type: object
+            required: [threshold_db, count, total_s]
+            properties:
+              threshold_db:
+                type: number
+                example: -40
+              count:
+                type: integer
+                example: 12
+              total_s:
+                type: number
+                example: 34.6
+              durations_s:
+                type: array
+                items:
+                  type: number

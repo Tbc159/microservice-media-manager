@@ -518,6 +518,79 @@ mancano, il renderer **non fallisce**: degrada al font di default di Pillow e lo
 
 ---
 
+## Dominio `audio` — elaborazione audio (BFF pubblico)
+
+Porta le capacita' del vecchio servizio `ffmpeg` (microservices-media) **senza i suoi vincoli**.
+Contratto: `openapi/audio/api.yaml`. Pubblico → CORS/HTTPS come `media`/`content`.
+
+**Input = riferimento** (`MediaRef`: id o filename) a un media in archivio, risolto via `source`,
+**non un upload dentro l'operazione**: la stessa sorgente si riusa fra piu' tentativi. **Ogni
+operazione produce un NUOVO media e non distrugge l'ingresso.** Ordine libero e formati
+indifferenti (ogni operazione risolve il riferimento allo stesso modo; niente cartelle-per-op,
+niente "solo mp3": **anche i wav** passano da `silence`).
+
+### Operazioni (modello a job)
+Le lavorazioni sono lunghe: `POST` risponde **`202`** con `{ job_id, status, op, poll_url }`; si
+segue con `GET /v0/audio/job/{id}` (`queued` → `running` → `succeeded`|`failed`). I job sono
+**persistenti** (SQLite): sopravvivono al riavvio (i `running` interrotti tornano `queued`).
+
+| Endpoint | Cosa fa | Output |
+|----------|---------|--------|
+| `POST /v0/audio/normalize` | livella le voci (EBU R128) | nuovo media audio (default mp3) |
+| `POST /v0/audio/silence` | accorcia i silenzi (incl. iniziale/finale) | nuovo media (default wav) |
+| `POST /v0/audio/convert` | cambia contenitore/codec | nuovo media nel `format` |
+| `POST /v0/audio/analyze` | **misura** e non modifica nulla | `result.analysis` (riusabile) |
+| `POST /v0/audio/split` | divide in segmenti | N nuovi media |
+| `POST /v0/audio/concat` | sigla + corpo + coda | un nuovo media |
+| `GET /v0/audio/job/{id}` | stato del job | `result.media[]` o `result.analysis` |
+
+A `succeeded`, `result.media[]` elenca `{ id, media_type, content_url, download_url }` (URL su
+`/v0/media`); per `analyze`, `result.analysis` (associata al media, non ricalcolata).
+
+### Scelte DSP (misurate)
+- **normalize**: `dynaudnorm=f=250:g=11:m=<maxgain>` + `loudnorm`. **`maxgain` e' il tetto di
+  correzione** (dB = 20·log10(maxgain)); il default 10 di ffmpeg (+20 dB) lascia i parlanti
+  disallineati — qui **default 80**. Misurato su due parlanti a 18 LU di scarto: catena vecchia
+  ~non allinea; con `maxgain` alto lo scarto scende **< 1 LU** e il file va a **-16 LUFS**.
+  `two_pass` (misura+applica) e' piu' preciso ma raddoppia il tempo; una passata basta.
+- **silence**: `silenceremove` con `start_periods` (**taglia il silenzio iniziale lungo**, nuovo
+  requisito) + `stop_periods=-1`, lasciando `keep_silence_s` (pausa udibile, non stacchi netti).
+  Soglia con **unita' dB** (`-40dB`, non ampiezza lineare).
+- **Intermedi senza perdita**: `silence`/`split` producono wav di default; la compressione avviene
+  dove il chiamante sceglie il `format` (`normalize`/`convert`/`concat`). Cosi' una catena di
+  operazioni non ricomprime a ogni passaggio.
+- **Raccomandazione di qualita'** (nell'endpoint, non imposta dall'infrastruttura): **prima
+  `silence`, poi `normalize`** — normalizzare prima alza il rumore di fondo sopra la soglia di
+  silenzio e il taglio non lo riconosce piu'.
+- **Limite dichiarato**: due voci sovrapposte nello stesso canale non si separano; con tracce
+  separate per parlante, normalizzarle prima del mix e' meglio.
+
+### Contratto errori & formati
+- Formati input accettati: `audio/m4a`, `audio/mpeg` (`audio/mp3` alias), `audio/wav`. Output:
+  `audio/mpeg`|`audio/m4a`|`audio/wav`. Dichiarati nell'OAS **per operazione**.
+- Errori **diagnostici** (`400`): riferimento non risolto → `field`/`value`/`searched_by`; formato
+  non supportato → il tipo rilevato + i formati accettati. (Il client non deve piu' "sapere" da se'
+  che i wav non si possono tagliare: e' falso, e comunque l'errore lo direbbe.)
+
+### Naming human-readable
+Gli id sono usabili **a mano**: job `normalize-20260910-153000-a3f9`, media prodotti
+`<stem-sorgente>-<op>-<token>.<ext>` (es. `puntata-pilota-normalize-a3f9.mp3`). Niente uuid opachi.
+
+### Architettura
+```
+controllers/audio_controller.py   thin: valida/accoda -> (202 job | 400 diagnostico)
+factory.py  build_service()/build_worker()/maybe_start_background_worker()
+services/audio_service.py          risolve MediaRef, valida formati, crea job (persistente)
+worker.py                          rivendica un job, scarica input(source), ffmpeg, carica output
+repositories/job_store.py          SQLite: job + cache analisi; claim atomico; recovery al riavvio
+processors/ffmpeg_processor.py     command-builder puri (misurati) + runner + parsing analyze
+gateway.py                         verso source: resolve/get_bytes/upload (byte reali, 302-follow)
+```
+Il worker gira in background nel container (`AUDIO_START_WORKER=1`); `AUDIO_DB_PATH` e' su volume
+persistente. ffmpeg e' installato nell'immagine **solo** per `DOMAIN=audio` (Dockerfile parametrico).
+
+---
+
 ## Aggiungere un nuovo dominio
 
 Grazie alla discovery, basta:

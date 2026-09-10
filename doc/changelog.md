@@ -275,6 +275,33 @@ Espone nel BFF pubblico l'upload da URL: il server scarica il contenuto e delega
 - Duplicato → **`409`** (filename dedotto dall'URL = hash Blossom → dedup su `object_key`).
 - Test: URL valido, tipo non accettato, rete privata, oltre limite, duplicato + unit SSRF. Suite a **175**.
 
+## 20. Dominio `audio` — elaborazione (job persistenti, ffmpeg misurato) (2026-09-10)
+
+Nuovo dominio pubblico `audio` che porta le capacita' del vecchio servizio `ffmpeg`
+(microservices-media, letto solo come riferimento — nessuna modifica la') **senza i suoi vincoli**.
+
+- **Operazioni** (`openapi/audio/api.yaml`): `normalize`, `silence`, `convert`, `analyze`, `split`,
+  `concat`; `GET /audio/job/{id}`. Input = **riferimento** (`MediaRef` id/filename) risolto via
+  `source`; output = nuovi media (`result.media[]` con URL su `/v0/media`). **Modello a job**:
+  `POST`→`202`+`job_id`, polling. Job **persistenti** su SQLite (sopravvivono al riavvio; `running`
+  interrotti → `queued`), worker in background, claim atomico.
+- **Vincoli del vecchio rimossi**: riferimenti (non cartelle-per-op) → ordine libero e formati
+  indifferenti (anche i **wav** in `silence`); input **non distrutto**; intermedi **senza perdita**
+  (compressione solo dove si sceglie `format`); tutte le operazioni sono **job**; niente stato in
+  memoria; niente `verify=False`.
+- **DSP misurato** (verificato con ffmpeg reale nei test e2e): `normalize` =
+  `dynaudnorm f=250 g=11 m=<maxgain>` + `loudnorm` — `maxgain` alto (default 80) allinea i parlanti
+  (< 1 LU) a -16 LUFS (il default 10 di ffmpeg no); `silence` taglia anche il **silenzio
+  iniziale/finale** e lascia una pausa udibile, soglia in `dB`. `analyze` misura LUFS/true-peak/LRA/
+  **rumore di fondo**/distribuzione silenzi, associata al media (riuso).
+- **Contratto**: formati dichiarati per operazione; errori **diagnostici** (`field`/`value`/
+  `searched_by` o formato rilevato + accettati). Naming **human-readable** per job e media prodotti.
+- **Deploy**: `docker-compose.audio.yml` + `config/audio/*.env`; Dockerfile installa ffmpeg **solo**
+  per `DOMAIN=audio`; `imageio-ffmpeg` in dev per i test e2e in CI.
+- Test: +28 (builder, job store persistente, API/errori, e2e DSP reali). Suite a **203**.
+- *Nota*: `audio/wav`+`audio/mpeg` nell'enum di `media`/`source` erano gia' stati aggiunti (voce #17);
+  fatti una volta sola come da indicazione.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

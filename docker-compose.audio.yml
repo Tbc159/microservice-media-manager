@@ -1,0 +1,38 @@
+# Unita' deployabile del dominio "audio" (elaborazione audio con ffmpeg).
+# Pubblico (CORS/HTTPS come media/content). Job persistenti su volume dedicato; worker in
+# background nel container. Ingresso solo via reverse-proxy; nome servizio = dominio.
+services:
+  audio:
+    build:
+      context: .
+      args:
+        DOMAIN: audio
+    image: media-manager-audio:latest
+    container_name: audio
+    environment:
+      DOMAIN: audio
+      PORT: 8080
+      # Iniettati dai secret dell'environment GitHub in fase di deploy (opzionali in locale)
+      API_HOST: ${API_HOST:-}
+      API_KEY: ${API_KEY:-}
+      API_SECRET: ${API_SECRET:-}
+      # CORS: origini web consentite (dominio pubblico). Vuoto -> CORS off.
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
+      # Job store persistente + worker in background nel container.
+      AUDIO_DB_PATH: /data/audio.db
+      AUDIO_START_WORKER: "1"
+      FFMPEG_BIN: ffmpeg
+    env_file:
+      - config/audio/${APP_ENV:-staging}.env
+    volumes:
+      # Persistenza dei job (sopravvivono al riavvio del container).
+      - ${AUDIO_DATA_PATH:-./data/audio}:/data
+    expose:
+      - "8080"
+    networks:
+      - mediamgr
+    restart: unless-stopped
+
+networks:
+  mediamgr:
+    external: true
