@@ -3,7 +3,7 @@
 Delega all'ImageService (assemblato dal factory) e traduce gli esiti in HTTP:
 - 201 con il DTO GeneratedImage;
 - 400 se un asset (logo/ospite) non esiste;
-- 501 se il `tipo` richiesto non e' ancora implementato (es. social).
+- 501 se il `tipo` richiesto non ha un generatore associato.
 """
 from src.domains.content.errors import AssetNotFound, TipoNonImplementato
 from src.domains.content.factory import build_image_service

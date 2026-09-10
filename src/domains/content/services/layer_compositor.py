@@ -1,13 +1,13 @@
-"""Layer-based image compositor for the `composita` generator.
+"""Layer-based image compositor shared by every layered generator (`composita`, presets).
 
 Pure Pillow, framework- and network-agnostic: it receives layers whose asset references have
-already been resolved to bytes by the caller (the service), and composes them onto a
-1920x1080 canvas. Position and size accept keyword / percentage (free-space) / pixel forms.
-Returns ``(image_bytes, warnings)``.
+already been resolved to bytes by the caller (the service), and composes them onto a canvas
+whose size is a parameter (default 1920x1080, HD 16:9). Position and size accept keyword /
+percentage (free-space) / pixel forms. Returns ``(image_bytes, warnings)``.
 
-Layer dicts (as produced by ImageService):
-  background: {type, image_bytes|None, fit, fallback_color}
-  person/image: {type, image_bytes, x, y, size, opacity}
+Layer dicts (as produced by ImageService or by a preset):
+  background: {type, image_bytes|None, fit, fallback_color, overlay}
+  person/image: {type, image_bytes, x, y, size, opacity, mask}
   text: {type, content, font_bytes|None, font_size, color, align, x, y, max_width, stroke, box}
 """
 import io
@@ -21,8 +21,8 @@ from src.domains.content.services.copertina_renderer import FONT_EXTRABOLD, FONT
 
 logger = logging.getLogger("content")
 
-# Canvas HD standard YouTube
-W, H = 1920, 1080
+# Canvas HD standard YouTube: default, non piu' un vincolo (i preset ne usano altri).
+DEFAULT_CANVAS: Tuple[int, int] = (1920, 1080)
 
 _OUTPUT = {
     "image/png": ("PNG", {}),
@@ -32,6 +32,9 @@ _OUTPUT = {
 
 _X_KEYWORDS = {"left": 0.0, "center": 0.5, "right": 1.0}
 _Y_KEYWORDS = {"top": 0.0, "center": 0.5, "bottom": 1.0}
+
+# Sovracampionamento della maschera circolare: bordo antialiasato senza filtri.
+_MASK_SS = 4
 
 
 def _hex_to_rgb(value: str) -> Tuple[int, int, int]:
@@ -64,31 +67,43 @@ def _dim(spec: Optional[str], canvas_dim: int) -> Optional[int]:
     return int(spec[:-2] if spec.endswith("px") else spec)
 
 
-def _resolve_size(size_spec: Optional[dict], natural: Tuple[int, int]) -> Tuple[int, int]:
+def _resolve_size(
+    size_spec: Optional[dict], natural: Tuple[int, int], canvas: Tuple[int, int] = DEFAULT_CANVAS
+) -> Tuple[int, int]:
     """Target (width, height) in px. One dimension → aspect preserved; none → natural, clamped."""
     nat_w, nat_h = natural
+    cw, ch = canvas
     spec = size_spec or {}
-    w = _dim(spec.get("width"), W)
-    h = _dim(spec.get("height"), H)
+    w = _dim(spec.get("width"), cw)
+    h = _dim(spec.get("height"), ch)
     if w and not h:
         h = round(nat_h * (w / nat_w))
     elif h and not w:
         w = round(nat_w * (h / nat_h))
     elif not w and not h:
-        scale = min(1.0, W / nat_w, H / nat_h)  # clamp into canvas, never upscale
+        scale = min(1.0, cw / nat_w, ch / nat_h)  # clamp into canvas, never upscale
         w, h = round(nat_w * scale), round(nat_h * scale)
     return max(1, w), max(1, h)
 
 
-def _fit(img: Image.Image, mode: str) -> Image.Image:
+def _circle_side(size_spec: Optional[dict], natural: Tuple[int, int],
+                 canvas: Tuple[int, int]) -> int:
+    """Diametro del cerchio: la dimensione richiesta (se date entrambe, la minore)."""
+    spec = size_spec or {}
+    dims = [d for d in (_dim(spec.get("width"), canvas[0]), _dim(spec.get("height"), canvas[1])) if d]
+    return max(1, min(dims) if dims else min(*natural, *canvas))
+
+
+def _fit(img: Image.Image, mode: str, canvas: Tuple[int, int]) -> Image.Image:
+    cw, ch = canvas
     iw, ih = img.size
     if mode == "stretch":
-        return img.resize((W, H), Image.LANCZOS)
-    scale = max(W / iw, H / ih) if mode == "cover" else min(W / iw, H / ih)
+        return img.resize((cw, ch), Image.LANCZOS)
+    scale = max(cw / iw, ch / ih) if mode == "cover" else min(cw / iw, ch / ih)
     img = img.resize((round(iw * scale), round(ih * scale)), Image.LANCZOS)
     if mode == "cover":
-        left, top = (img.width - W) // 2, (img.height - H) // 2
-        img = img.crop((left, top, left + W, top + H))
+        left, top = (img.width - cw) // 2, (img.height - ch) // 2
+        img = img.crop((left, top, left + cw, top + ch))
     return img
 
 
@@ -100,8 +115,24 @@ def _apply_opacity(img: Image.Image, opacity: float) -> Image.Image:
     return img
 
 
+def _circle(img: Image.Image, side: int) -> Image.Image:
+    """Ritaglio circolare di diametro `side`: cover-fit nel quadrato + alfa a ellisse.
+
+    Il diametro e' quello **richiesto**, non quello che risulta dalle proporzioni della
+    sorgente: un logo largo e uno quadrato producono lo stesso cerchio, senza deformarli
+    (l'immagine viene riempita a `cover` e ritagliata al centro). Bordo antialiasato via
+    sovracampionamento.
+    """
+    img = _fit(img, "cover", (side, side))
+    mask = Image.new("L", (side * _MASK_SS, side * _MASK_SS), 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, side * _MASK_SS - 1, side * _MASK_SS - 1], fill=255)
+    mask = mask.resize((side, side), Image.LANCZOS)
+    img.putalpha(Image.composite(img.getchannel("A"), Image.new("L", (side, side), 0), mask))
+    return img
+
+
 def _composite_over(canvas: Image.Image, element: Image.Image, pos: Tuple[int, int]) -> Image.Image:
-    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     layer.paste(element, pos, element)
     return Image.alpha_composite(canvas, layer)
 
@@ -121,22 +152,37 @@ def _load_font(font_bytes: Optional[bytes], size: int, warnings: List[str]):
 
 
 def _render_background(canvas: Image.Image, layer: dict) -> Image.Image:
-    canvas.paste(_hex_to_rgb(layer.get("fallback_color", "#111111")) + (255,), [0, 0, W, H])
+    cw, ch = canvas.size
+    canvas.paste(_hex_to_rgb(layer.get("fallback_color", "#111111")) + (255,), [0, 0, cw, ch])
     data = layer.get("image_bytes")
-    if data is None:
+    if data is not None:
+        bg = _fit(Image.open(io.BytesIO(data)).convert("RGBA"), layer.get("fit", "cover"),
+                  canvas.size)
+        canvas = _composite_over(canvas, bg, ((cw - bg.width) // 2, (ch - bg.height) // 2))
+    return _apply_overlay(canvas, layer.get("overlay"))
+
+
+def _apply_overlay(canvas: Image.Image, overlay: Optional[dict]) -> Image.Image:
+    """Velo a tinta unita sopra lo sfondo: rende leggibile il testo su foto complesse."""
+    if not overlay:
         return canvas
-    bg = _fit(Image.open(io.BytesIO(data)).convert("RGBA"), layer.get("fit", "cover"))
-    pos = ((W - bg.width) // 2, (H - bg.height) // 2)
-    return _composite_over(canvas, bg, pos)
+    alpha = int(255 * overlay.get("opacity", 0.45))
+    veil = Image.new("RGBA", canvas.size, _hex_to_rgb(overlay.get("color", "#000000")) + (alpha,))
+    return Image.alpha_composite(canvas, veil)
 
 
 def _render_image(canvas: Image.Image, layer: dict) -> Image.Image:
+    cw, ch = canvas.size
     img = Image.open(io.BytesIO(layer["image_bytes"])).convert("RGBA")
-    w, h = _resolve_size(layer.get("size"), img.size)
-    img = img.resize((w, h), Image.LANCZOS)
+    if layer.get("mask") == "circle":
+        w = h = _circle_side(layer.get("size"), img.size, canvas.size)
+        img = _circle(img, w)
+    else:
+        w, h = _resolve_size(layer.get("size"), img.size, canvas.size)
+        img = img.resize((w, h), Image.LANCZOS)
     img = _apply_opacity(img, layer.get("opacity", 1))
-    x = _resolve_axis(layer.get("x"), w, W, _X_KEYWORDS)
-    y = _resolve_axis(layer.get("y"), h, H, _Y_KEYWORDS)
+    x = _resolve_axis(layer.get("x"), w, cw, _X_KEYWORDS)
+    y = _resolve_axis(layer.get("y"), h, ch, _Y_KEYWORDS)
     return _composite_over(canvas, img, (x, y))
 
 
@@ -153,11 +199,12 @@ def _draw_lines(draw, lines, widths, block_w, bx, by, line_h, align, font, fill,
         )
 
 
-def _build_shadow(shadow, lines, widths, block_w, bx, by, line_h, align, font, stroke_w) -> Image.Image:
+def _build_shadow(shadow, lines, widths, block_w, bx, by, line_h, align, font, stroke_w,
+                  canvas_size) -> Image.Image:
     """Ombra/glow del testo: silhouette piena nel colore ombra, sfocata e con opacita'."""
     color = _hex_to_rgb(shadow.get("color", "#000000"))
     off = shadow.get("offset") or {}
-    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    img = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
     _draw_lines(
         ImageDraw.Draw(img), lines, widths, block_w,
         bx + off.get("x", 4), by + off.get("y", 4), line_h, align, font, color, stroke_w, color,
@@ -169,6 +216,7 @@ def _build_shadow(shadow, lines, widths, block_w, bx, by, line_h, align, font, s
 
 
 def _render_text(canvas: Image.Image, layer: dict, warnings: List[str]) -> Image.Image:
+    cw, ch = canvas.size
     font = _load_font(layer.get("font_bytes"), layer.get("font_size", 72), warnings)
     color = _hex_to_rgb(layer.get("color", "#ffffff"))
     align = layer.get("align", "left")
@@ -176,7 +224,7 @@ def _render_text(canvas: Image.Image, layer: dict, warnings: List[str]) -> Image
     stroke_w = stroke.get("width", 0) or 0
     stroke_fill = _hex_to_rgb(stroke.get("color", "#000000")) if stroke_w else None
 
-    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     odraw = ImageDraw.Draw(overlay)
 
     lines = _wrap(layer["content"], font, layer.get("max_width"), odraw, stroke_w)
@@ -186,8 +234,8 @@ def _render_text(canvas: Image.Image, layer: dict, warnings: List[str]) -> Image
     line_h = ascent + descent + stroke_w * 2
     block_h = line_h * len(lines)
 
-    bx = _resolve_axis(layer.get("x"), block_w, W, _X_KEYWORDS)
-    by = _resolve_axis(layer.get("y"), block_h, H, _Y_KEYWORDS)
+    bx = _resolve_axis(layer.get("x"), block_w, cw, _X_KEYWORDS)
+    by = _resolve_axis(layer.get("y"), block_h, ch, _Y_KEYWORDS)
 
     box = layer.get("box")
     if box:
@@ -205,7 +253,8 @@ def _render_text(canvas: Image.Image, layer: dict, warnings: List[str]) -> Image
     if shadow:
         overlay = Image.alpha_composite(
             overlay,
-            _build_shadow(shadow, lines, widths, block_w, bx, by, line_h, align, font, stroke_w),
+            _build_shadow(shadow, lines, widths, block_w, bx, by, line_h, align, font, stroke_w,
+                          canvas.size),
         )
         odraw = ImageDraw.Draw(overlay)
 
@@ -246,18 +295,20 @@ _RENDERERS = {
 }
 
 
-def render_composita(layers: List[dict], *, formato: str = "image/png") -> "Tuple[bytes, List[str]]":
-    """Compose the resolved layers onto the 1920x1080 canvas; returns (bytes, warnings)."""
+def render_composita(
+    layers: List[dict], *, formato: str = "image/png", canvas: Tuple[int, int] = DEFAULT_CANVAS
+) -> "Tuple[bytes, List[str]]":
+    """Compose the resolved layers onto a `canvas`-sized image; returns (bytes, warnings)."""
     warnings: List[str] = []
-    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    image = Image.new("RGBA", canvas, (0, 0, 0, 0))
     for layer in layers:
         renderer = _RENDERERS[layer["type"]]
-        canvas = renderer(canvas, layer, warnings)
+        image = renderer(image, layer, warnings)
 
     pil_format, kwargs = _OUTPUT[formato]
-    out = canvas.convert("RGB") if pil_format == "JPEG" else canvas
+    out = image.convert("RGB") if pil_format == "JPEG" else image
     buf = io.BytesIO()
     out.save(buf, pil_format, **kwargs)
-    logger.info("Composita generata: %sx%s, layer=%s, formato=%s, warnings=%s",
-                W, H, len(layers), formato, len(warnings))
+    logger.info("Immagine composta: %sx%s, layer=%s, formato=%s, warnings=%s",
+                canvas[0], canvas[1], len(layers), formato, len(warnings))
     return buf.getvalue(), warnings

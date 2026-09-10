@@ -3,14 +3,16 @@
 Orchestra la generazione: risolve gli asset (`MediaRef` = id intero o nome file) in byte
 via il gateway verso `source`, invoca il renderer Pillow, salva l'immagine prodotta come
 media su `source` e restituisce un DTO con gli URL pubblici (ri-mappati su /v0/media).
-Il dispatch sul campo `tipo` lascia spazio a generatori futuri (social, ...).
+Il dispatch sul campo `tipo` sceglie il generatore: `copertina` (template fisso),
+`composita` (layer espliciti) e i **preset** (`social`, `slide`), che sono layer generati
+da `presets.py` e passano dallo stesso motore: un solo percorso di codice.
 """
 import uuid
 from typing import List, Optional
 
 from src.domains.content.errors import AssetNotFound, TipoNonImplementato
 from src.domains.content.gateway import SourceGateway
-from src.domains.content.services import copertina_renderer, layer_compositor
+from src.domains.content.services import copertina_renderer, layer_compositor, presets
 
 _SOURCE_PREFIX = "/v0/source/media/"
 _MEDIA_PREFIX = "/v0/media/"
@@ -50,13 +52,20 @@ class ImageService:
 
         Raises:
             AssetNotFound: un asset referenziato non esiste su source (-> 400).
-            TipoNonImplementato: generatore non ancora portato, es. social (-> 501).
+            TipoNonImplementato: `tipo` senza generatore associato (-> 501).
         """
         tipo = body["tipo"]
         if tipo == "copertina":
             return self._generate_copertina(body)
         if tipo == "composita":
-            return self._generate_composita(body)
+            return self._generate_layered(
+                tipo, body, body["layers"], layer_compositor.DEFAULT_CANVAS, title="composizione"
+            )
+        if presets.is_preset(tipo):
+            canvas, layers = presets.build(tipo, body)
+            return self._generate_layered(
+                tipo, body, layers, canvas, title=presets.title_for(tipo, body)
+            )
         raise TipoNonImplementato(tipo)
 
     def _generate_copertina(self, body: dict) -> dict:
@@ -98,21 +107,28 @@ class ImageService:
         dto["warnings"] = warnings
         return dto
 
-    def _generate_composita(self, body: dict) -> dict:
-        """Layer engine: resolve each layer's assets to bytes, compose, save, return DTO.
+    def _generate_layered(
+        self, tipo: str, body: dict, layers: List[dict], canvas, *, title: str
+    ) -> dict:
+        """Motore a layer condiviso: risolve gli asset di ogni layer in byte, compone sulla
+        canvas indicata, salva l'immagine come media e restituisce il DTO.
 
-        Missing asset on a person/image layer → skipped with warning, unless `required: true`
-        (→ AssetNotFound/400). A missing background image falls back to its color.
+        Vale sia per i `layers[]` scritti a mano (`composita`) sia per quelli generati da un
+        preset (`social`, `slide`): stesse regole, stessi warning, stessi 400 diagnosticabili.
+        Asset mancante su un layer person/image → layer saltato con warning, salvo `required: true`
+        (→ AssetNotFound/400). Sfondo mancante → si usa il colore di fallback.
+        Il nome del campo citato nella diagnostica e' quello della richiesta: `_field`/`_font_field`
+        se il layer li porta (preset), altrimenti `layers[i].media`/`layers[i].font`.
         """
         formato = body.get("formato", "image/png")
         warnings: List[str] = []
         resolved: List[dict] = []
 
-        for i, layer in enumerate(body["layers"]):
+        for i, layer in enumerate(layers):
             ltype = layer["type"]
-            field = f"layers[{i}].media"
+            item = {k: v for k, v in layer.items() if not k.startswith("_")}
+            field = layer.get("_field", f"layers[{i}].media")
             if ltype == "background":
-                item = dict(layer)
                 ref = layer.get("media")
                 item["image_bytes"] = self._fetch_ref(ref) if ref is not None else None
                 if ref is not None and item["image_bytes"] is None:
@@ -130,29 +146,31 @@ class ImageService:
                         f"layer {ltype} ({field}) '{ref}' non trovato per filename: layer saltato"
                     )
                     continue
-                item = dict(layer)
                 item["image_bytes"] = data
                 resolved.append(item)
             elif ltype == "text":
-                item = dict(layer)
                 font_ref = layer.get("font")
                 item["font_bytes"] = (
-                    self._fetch_font(font_ref, "testo", f"layers[{i}].font", warnings)
+                    self._fetch_font(
+                        font_ref, "testo", layer.get("_font_field", f"layers[{i}].font"), warnings
+                    )
                     if font_ref is not None
                     else None
                 )
                 resolved.append(item)
 
-        image, render_warnings = layer_compositor.render_composita(resolved, formato=formato)
+        image, render_warnings = layer_compositor.render_composita(
+            resolved, formato=formato, canvas=canvas
+        )
         warnings.extend(render_warnings)
 
-        filename = f"composita-{uuid.uuid4().hex[:8]}.{copertina_renderer.ext_for(formato)}"
+        filename = f"{tipo}-{uuid.uuid4().hex[:8]}.{copertina_renderer.ext_for(formato)}"
         result = self._gw.upload_image(
-            title="composizione", media_type=formato, filename=filename, data=image
+            title=title, media_type=formato, filename=filename, data=image
         )
         if result.status_code != 201:
             raise AssetNotFound(result.payload.get("detail", "salvataggio immagine fallito"))
-        dto = self._to_generated(result.payload, tipo="composita", formato=formato)
+        dto = self._to_generated(result.payload, tipo=tipo, formato=formato)
         dto["warnings"] = warnings
         return dto
 

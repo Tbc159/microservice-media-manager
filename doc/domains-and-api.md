@@ -336,7 +336,8 @@ campo `tipo` (discriminatore) seleziona il generatore e **quali campi** sono amm
 |--------|-------|--------------|
 | `copertina` | ✅ attivo | template fisso "21milioni di chiacchiere": `titolo`*, `testo_centrale`*, `logo_host`*, `ospiti[≤5]`, `colore_sfondo`, `tipo_sfondo` (`unicolor`\|`sfumato-up`\|`sfumato-down`), `colore_sfumato`, `formato`, `font_titolo`, `font_testo` |
 | `composita` | ✅ attivo | **motore a layer** (1920×1080): `layers[]`* (vedi sotto), `formato` |
-| `social` | 🚧 draft → `501` | `logo_top`*, `logo_bottom`*, `testo`, `testo_bottom`, `colore_sfondo`, `colore_testo`, `formato` |
+| `social` | ✅ attivo | **preset** quadrato (1080×1080): `logo_top`*, `logo_bottom`, `testo`, `testo_bottom`, `colore_sfondo`, `colore_testo`, `font`, `formato` |
+| `slide` | ✅ attivo | **preset** 16:9 da copertina video (1920×1080): `titolo`*, `sottotitolo`, `sfondo`, `fit`, `persone[≤3]`, `logo`, `colore_sfondo`, `colore_velo`, `velo`, `colore_testo`, `dimensione_titolo`, `allineamento`, `font_titolo`, `font_testo`, `formato` |
 
 (*) obbligatorio. `formato` ∈ `image/png` (default) \| `image/jpeg` \| `image/webp`.
 
@@ -369,8 +370,8 @@ risposta resta `201`). Asimmetria voluta: **logo mancante = `400`** (hard), **fo
 Risposte: `201` → `GeneratedImage` `{ id, tipo, media_type, size_bytes, created_at_s, content_url,
 download_url, warnings[] }` (gli URL puntano a `/v0/media/{id}/content`; `warnings` elenca i fallback
 non bloccanti); `400` parametri invalidi o asset **obbligatorio** non trovato (corpo **diagnostico**:
-`field`/`value`/`searched_by`, vedi sopra); `501` `tipo` non ancora implementato (es. `social`); `401`
-senza chiave.
+`field`/`value`/`searched_by`, vedi sopra); `501` `tipo` senza generatore associato (contratto
+riservato ai tipi futuri: oggi nessuno lo restituisce); `401` senza chiave.
 
 **Esempio (Bruno / curl).** Prima carica gli asset come media `image/*` per ottenerne gli id:
 
@@ -412,10 +413,10 @@ nome file** (`MediaRef`).
 
 | `type` | A cosa serve | Campi principali |
 |--------|--------------|------------------|
-| `background` | immagine/colore a piena canvas | `media`, `fit` (`cover`\|`contain`\|`stretch`), `fallback_color` |
-| `person` | persona PNG **scontornata**, N affiancabili | `media`*, `x`, `y`, `size`, `opacity`, `required` |
+| `background` | immagine/colore a piena canvas | `media`, `fit` (`cover`\|`contain`\|`stretch`), `fallback_color`, `overlay` |
+| `person` | persona PNG **scontornata**, N affiancabili | `media`*, `x`, `y`, `size`, `opacity`, `mask`, `required` |
 | `text` | testo (titolo/dettagli), `\n` multi-riga | `content`*, `font`, `font_size`, `color`, `align`, `x`, `y`, `max_width`, `stroke`, `box` |
-| `image` | logo/inserto/grafica sovrapposta | `media`*, `x`, `y`, `size`, `opacity`, `required` |
+| `image` | logo/inserto/grafica sovrapposta | `media`*, `x`, `y`, `size`, `opacity`, `mask`, `required` |
 
 **Posizionamento (`x`/`y`)** — tre forme, semantica unica:
 
@@ -427,6 +428,15 @@ nome file** (`MediaRef`).
 
 `size` (`{width, height}`) accetta `%` o px; una sola → aspetto preservato; nessuna → naturale
 (clampata alla canvas, mai ingrandita).
+
+**Ritaglio (`mask: circle`)** su `person`/`image`: il layer diventa un **cerchio** del diametro
+richiesto in `size` (se sono date entrambe le dimensioni vince la minore). L'immagine viene
+riempita a `cover` e ritagliata al centro, quindi **il diametro non dipende dalle proporzioni della
+sorgente**: un logo 3:1 e uno quadrato producono lo stesso tondo, senza deformarsi.
+
+**Velo sullo sfondo (`overlay`)** su `background`: `{color, opacity}` steso sopra l'immagine (sotto
+agli altri layer). È il modo standard per rendere leggibile un titolo su una foto complessa —
+`{ "color": "#000000", "opacity": 0.45 }` è quello che usa il preset `slide`.
 
 **Stile del testo** (è ciò che rende le copertine "da YouTube"):
 - `stroke`: `{width, color}` — bordo del testo (nativo Pillow).
@@ -465,6 +475,57 @@ fallisce); con `required: true` invece → `400`. Lo sfondo mancante cade su `fa
 }
 ```
 
+### `tipo: social` e `tipo: slide` — preset del motore a layer
+
+Un **preset** non è un secondo motore: è una funzione pura che espande i propri campi nei **layer**
+di `composita` e passa dallo **stesso renderer**. Conseguenza pratica: stessa risoluzione degli
+asset, stessi `warnings`, stessi `400` diagnosticabili, un solo percorso di codice da mantenere.
+Serve un layout diverso da quello del preset? Si usa `composita` e si scrivono i layer a mano.
+
+> I `400` dei preset citano il **campo della richiesta** (`logo_top`, `sfondo`, `persone`), non
+> `layers[2].media`: chi chiama vede il proprio contratto, non l'espansione interna.
+
+**`social` — quadrato 1080×1080.** Dall'alto: sfondo a tinta unita (`colore_sfondo`) → `logo_top`
+(vincolato in **altezza**, 170 px, a 70 px dal bordo: la fascia che occupa non dipende dalle sue
+proporzioni, così il testo non gli finisce mai sopra) → `testo` reso in **MAIUSCOLO** e centrato
+verticalmente → `logo_bottom` ritagliato **a cerchio** di 260 px → `testo_bottom` in fondo.
+`logo_top` è obbligatorio (non risolvibile → `400`); `logo_bottom` degrada a warning.
+
+```jsonc
+{ "tipo": "social", "logo_top": "logo-radio.png", "logo_bottom": 42,
+  "testo": "è lieto di ospitare", "testo_bottom": "Alice Rossi",
+  "colore_sfondo": "#ff751f", "colore_testo": "#ffffff" }
+```
+
+**`slide` — 16:9 1920×1080, copertina di un video** (il caso d'uso finora scritto a mano con
+`composita`). Dallo sfondo in su: `sfondo` a piena canvas (`fit`, fallback `colore_sfondo`) + un
+**velo** (`colore_velo` + `velo`, default nero 0.45) che rende leggibile il testo → fino a 3
+`persone` scontornate allineate in basso → `logo` in alto a sinistra (260 px) → `titolo` con glow →
+`sottotitolo`.
+
+`allineamento` decide l'impaginazione:
+
+| valore | titolo/sottotitolo | ospiti |
+|---|---|---|
+| `left` (default) | a sinistra, 80 px dal bordo, larghezza max 920 px | fascia di destra |
+| `center` | centrati | distribuiti su tutta la larghezza |
+
+Due accorgimenti che rendono il preset robusto: l'**altezza degli ospiti si adatta al numero**
+(1 → 70% della canvas, 2 → 62%, 3 → 55%) e titolo/sottotitolo sono posizionati **nello spazio
+libero** (`y: "55%"`/`"80%"`), quindi un titolo che va a capo su più righe sale da solo senza mai
+sovrapporsi al sottotitolo.
+
+```jsonc
+{ "tipo": "slide", "titolo": "Bitcoin è denaro,\nnon un investimento",
+  "sottotitolo": "Puntata 42 — con Alice e Bob",
+  "sfondo": "studio.jpg", "logo": "logo-radio.png", "persone": [21, 22],
+  "velo": 0.5, "allineamento": "left", "formato": "image/jpeg" }
+```
+
+**Aggiungere un preset**: un builder in `services/presets.py` (richiesta → `(canvas, layers)`, senza
+I/O) + il suo schema `<Nome>Request` in `openapi/content/api.yaml` (voce nel `discriminator` e nella
+`mapping`, e il nuovo valore in `GeneratedImage.tipo`). Il service e il renderer non cambiano.
+
 ### `GET /v0/content/fonts` — catalogo font
 
 Elenco dei font caricati su `source` (`font/ttf`/`font/otf`), referenziabili nei layer `text`
@@ -492,8 +553,10 @@ factory.py  ── build_image_service() ── SOURCE_INTERNAL_URL, API_KEY
         │
 services/image_service.py            orchestrazione: risolve MediaRef → byte, dispatch su `tipo`,
         │                            salva su source, ri-mappa URL /v0/source → /v0/media
+        │                            (`composita` e i preset condividono `_generate_layered`)
         ├── services/copertina_renderer.py   Pillow puro (copertina 2560×1440), niente rete/framework
-        ├── services/layer_compositor.py     Pillow puro (composita 1920×1080), compositing a layer
+        ├── services/presets.py              social/slide → (canvas, layers): funzione pura, niente I/O
+        ├── services/layer_compositor.py     Pillow puro, canvas parametrica, compositing a layer
         └── gateway.py               SourceGateway: resolve_filename, get_bytes (segue il 302), upload_image
 ```
 
@@ -509,8 +572,9 @@ mancano, il renderer **non fallisce**: degrada al font di default di Pillow e lo
 | Aspetto | Oggi | Futuro |
 |---------|------|--------|
 | `POST /v0/content/image` `tipo: copertina` | ✅ Pillow, asset per id/nome file, output png/jpeg/webp | — |
-| `tipo: composita` (motore a layer 1920×1080) | ✅ `layer_compositor.py`: `background`/`person`/`text`/`image`, posizione keyword/%/px, `size`, `stroke`/`box`, N layer | template/preset salvabili |
-| `tipo: social` | 🚧 schema draft → `501` | porting di `social_processor.py` (1080×1080) |
+| `tipo: composita` (motore a layer, canvas parametrica) | ✅ `layer_compositor.py`: `background`/`person`/`text`/`image`, posizione keyword/%/px, `size`, `stroke`/`box`/`shadow`, `mask: circle`, `overlay`, N layer | template/preset salvabili |
+| `tipo: social` (1080×1080) | ✅ **preset** sul motore a layer (`presets.py`), non un secondo renderer | — |
+| `tipo: slide` (16:9 copertina video) | ✅ **preset**: sfondo+velo, ≤3 ospiti, titolo/sottotitolo, logo, `allineamento` | preset salvabili lato utente |
 | Salvataggio risultato | ✅ come media `image/*` via `source`, recupero via `/v0/media` | — |
 | Font personalizzati (`font_titolo`/`font_testo`) | ✅ caricati su `source` (`font/ttf`/`otf`), referenziati per id/nome file | — |
 | Font mancante | ✅ fallback (custom → Montserrat → Pillow) + `warnings[]` nella risposta | — |

@@ -173,13 +173,36 @@ def test_composita_invalid_layer_type_400(client):
     assert r.status_code == 400
 
 
-def test_social_is_501(client):
+def test_social_preset_201(client):
     r = client.post(
         "/v0/content/image",
-        json={"tipo": "social", "logo_top": 10, "logo_bottom": 10},
+        json={"tipo": "social", "logo_top": 10, "logo_bottom": 10, "testo": "ospite di oggi"},
         headers=_KEY,
     )
-    assert r.status_code == 501
+    assert r.status_code == 201, r.json()
+    assert r.json()["tipo"] == "social"
+
+
+def test_slide_preset_201(client):
+    r = client.post(
+        "/v0/content/image",
+        json={"tipo": "slide", "titolo": "Bitcoin è denaro", "sottotitolo": "Puntata 42",
+              "sfondo": 10, "persone": [10], "allineamento": "center"},
+        headers=_KEY,
+    )
+    assert r.status_code == 201, r.json()
+    assert r.json()["tipo"] == "slide"
+
+
+def test_slide_requires_titolo(client):
+    r = client.post("/v0/content/image", json={"tipo": "slide"}, headers=_KEY)
+    assert r.status_code in (400, 422)
+
+
+def test_unknown_tipo_is_rejected_by_the_contract(client):
+    # il discriminator non ha una mappa per `carosello`: la richiesta non passa la validazione
+    r = client.post("/v0/content/image", json={"tipo": "carosello"}, headers=_KEY)
+    assert r.status_code in (400, 422)
 
 
 def test_missing_required_field_is_422_or_400(client):

@@ -302,6 +302,27 @@ Nuovo dominio pubblico `audio` che porta le capacita' del vecchio servizio `ffmp
 - *Nota*: `audio/wav`+`audio/mpeg` nell'enum di `media`/`source` erano gia' stati aggiunti (voce #17);
   fatti una volta sola come da indicazione.
 
+## 21. Preset `social` e `slide` sul motore a layer (2026-09-10)
+
+`social` non era implementato (rispondeva `501`) e il formato 16:9 da copertina video si scriveva a
+mano con `composita`. Entrambi diventano **preset**: non un secondo renderer, ma una funzione pura
+che espande i campi nei **layer** del motore esistente.
+
+- **`presets.py`**: richiesta → `(canvas, layers)`, senza I/O. `social` = quadrato 1080×1080 (logo
+  in alto vincolato in altezza, testo maiuscolo centrato, logo tondo, testo inferiore); `slide` =
+  16:9 (sfondo + velo, ≤3 ospiti con altezza adattata al numero, logo, titolo con glow,
+  sottotitolo, `allineamento` left/center).
+- **Un solo percorso di codice**: `composita` e i preset passano da `ImageService._generate_layered`
+  — stessa risoluzione asset, stessi `warnings`, stessi `400`. I preset marcano ogni layer col
+  **campo della richiesta** (`_field`), così il `400` cita `logo_top`, non `layers[2].media`.
+- **Motore parametrico**: la canvas non e' piu' fissa a 1920×1080 (`render_composita(..., canvas=)`),
+  piu' due capacita' generiche usate dai preset e disponibili anche in `composita` —
+  `mask: circle` su `person`/`image` (diametro **richiesto**, cover-fit: indipendente dalle
+  proporzioni della sorgente) e `overlay {color, opacity}` su `background` (velo per la
+  leggibilita' del testo).
+- **Contratto**: `SlideRequest` nuovo, `SocialRequest` non piu' draft, `slide` nel `discriminator` e
+  in `GeneratedImage.tipo`. Il `501` resta come contratto per i tipi futuri.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

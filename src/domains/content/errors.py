@@ -59,7 +59,7 @@ class AssetNotFound(Exception):
 
 
 class TipoNonImplementato(Exception):
-    """Il generatore per quel `tipo` non e' ancora implementato (es. social)."""
+    """Nessun generatore associato a quel `tipo` (riservato ai tipi futuri)."""
 
     def __init__(self, tipo: str) -> None:
         self.tipo = tipo
