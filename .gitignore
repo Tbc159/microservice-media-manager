@@ -11,3 +11,8 @@ venv/
 .claude/
 # Istruzioni locali per Claude Code: non versionate
 CLAUDE.md
+
+# Reverse-proxy TLS: certificati e webroot ACME (mai committare i certificati)
+deploy/proxy/certs/
+deploy/proxy/letsencrypt/
+deploy/proxy/certbot-www/

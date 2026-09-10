@@ -74,6 +74,56 @@ docker compose -f docker-compose.media.yml up -d --build
 curl -fsS http://localhost:${PROXY_HTTP_PORT:-80}/media/health
 ```
 
+## HTTPS del proxy (Let's Encrypt via DuckDNS, DNS-01)
+
+Il proxy termina il TLS. Emissione **una tantum** sull'host (serve il token DuckDNS). Con il
+challenge **DNS-01** non serve esporre la 80: si aggiorna il TXT `_acme-challenge.<sub>.duckdns.org`
+via l'API DuckDNS.
+
+```bash
+export DUCKDNS_TOKEN=xxxxxxxx SUB=mediamanager-dev
+mkdir -p deploy/proxy/certs deploy/proxy/certbot-www
+
+# 1) Emetti il certificato (hook manuali che aggiornano il TXT su DuckDNS)
+docker run --rm -it -v "$PWD/deploy/proxy/letsencrypt:/etc/letsencrypt" certbot/certbot certonly \
+  --manual --preferred-challenges dns --agree-tos -m you@example.com --no-eff-email \
+  --manual-auth-hook 'curl -fsS "https://www.duckdns.org/update?domains='"$SUB"'&token='"$DUCKDNS_TOKEN"'&txt=$CERTBOT_VALIDATION" && sleep 30' \
+  --manual-cleanup-hook 'curl -fsS "https://www.duckdns.org/update?domains='"$SUB"'&token='"$DUCKDNS_TOKEN"'&txt=removed&clear=true"' \
+  -d "$SUB.duckdns.org"
+# (in alternativa il plugin certbot-dns-duckdns, senza hook manuali)
+
+# 2) Rendi i cert leggibili dal proxy come fullchain.pem + privkey.pem
+cp deploy/proxy/letsencrypt/live/$SUB.duckdns.org/{fullchain,privkey}.pem deploy/proxy/certs/
+```
+
+3. **Attiva TLS** impostando i `vars` dell'Environment GitHub (staging):
+   `PROXY_TLS=1`, `PROXY_SERVER_NAME=mediamanager-dev.duckdns.org`
+   (`PROXY_CERTS_DIR`/`PROXY_HTTPS_PORT` hanno default `./certs` e `443`). Al deploy successivo
+   `gen-nginx-conf.sh` genera il server `:443` + redirect `:80→443`, e il compose pubblica la 443 e
+   monta i certificati. In locale/debug:
+   `PROXY_TLS=1 PROXY_SERVER_NAME=... bash deploy/proxy/gen-nginx-conf.sh`.
+
+4. **Rinnovo** (i cert durano 90g): cron sull'host che rilancia `certbot renew` (stessi hook), ricopia
+   i pem in `deploy/proxy/certs/` e ricarica nginx: `docker exec mediamgr-proxy nginx -s reload`.
+
+> I certificati e i webroot ACME (`deploy/proxy/certs/`, `letsencrypt/`, `certbot-www/`) sono
+> **gitignored**: non vanno mai committati. `source` resta interno (nessuna rotta nel proxy), quindi
+> non e' esposto neppure via https.
+
+## CORS dei domini pubblici (`media`, `content`)
+
+Il CORS e' gestito **nell'app** (`src/cors.py`), non in nginx: unica sede (niente header duplicati che
+romperebbero il preflight) e preflight coperto da un contract test. Si attiva impostando le origini web
+consentite:
+
+- `vars.CORS_ALLOW_ORIGINS` nell'Environment = elenco separato da virgola, es.
+  `https://app.miodominio.tld,http://localhost:5173`. Vuoto → CORS disattivato.
+
+Il workflow la passa ai soli container `media` e `content` (mai `source`). Il preflight `OPTIONS` su un
+endpoint pubblico risponde `204` con `Access-Control-Allow-Origin` (l'origine, mai `*`),
+`Access-Control-Allow-Headers: content-type, x-api-key`, `Access-Control-Allow-Methods: GET, POST,
+OPTIONS` e `Access-Control-Max-Age`.
+
 ## Aggiungere un nuovo dominio (es. social)
 
 1. `openapi/social/api.yaml` (path relative, operationId).

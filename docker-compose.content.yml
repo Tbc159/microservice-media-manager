@@ -17,6 +17,8 @@ services:
       API_HOST: ${API_HOST:-}
       API_KEY: ${API_KEY:-}
       API_SECRET: ${API_SECRET:-}
+      # CORS: origini web consentite (elenco separato da virgola). Vuoto -> CORS off.
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
     env_file:
       - config/content/${APP_ENV:-staging}.env
     # I font Montserrat NON sono versionati: per output curato montarli in FONTS_DIR
