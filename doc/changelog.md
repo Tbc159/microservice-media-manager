@@ -346,6 +346,23 @@ cache HTTP, niente `Range`.
 - **Deploy**: chiave come **secret** dell'Environment (`MEDIA_URL_SIGNING_KEY`), TTL come `vars`;
   propagate ai compose di `media`, `content` e `audio`.
 
+## 23. Fix del deploy: path dati fuori dal workspace del runner (2026-09-11)
+
+Il primo deploy del dominio `audio` ha rotto **tutti** i deploy successivi. `docker-compose.audio.yml`
+usa `${AUDIO_DATA_PATH:-./data/audio}` (come source col suo `SOURCE_DATA_PATH`), ma il workflow
+valorizzava solo quello di source: audio e' caduto sul default **relativo**, Docker ha creato il bind
+mount **come root dentro la checkout del runner**, e da li' in poi `actions/checkout` non e' piu'
+riuscito a ripulire la working dir — `EACCES: permission denied, rmdir .../data/audio`. Esito: il job
+`deploy (audio)` passa (era il primo), `media`, `content` e `source` falliscono **prima di iniziare**,
+quindi restano sul codice vecchio.
+
+- `AUDIO_DATA_PATH` valorizzato nel workflow (`/opt/mediamgr/audio`), simmetrico a `SOURCE_DATA_PATH`.
+- `.github/workflows/generate-api.yml` entra fra i **file condivisi** della detection: una modifica al
+  job di deploy deve raggiungere gli host, altrimenti resta inerte finche' non cambia altro (e un fix
+  alla pipeline non si sarebbe potuto applicare da solo).
+- `deploy/README.md`: la regola per i domini con volume — path dati **fuori** dal workspace — e la
+  procedura di recupero se la directory root-owned e' gia' stata creata.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

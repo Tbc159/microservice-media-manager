@@ -132,6 +132,15 @@ OPTIONS` e `Access-Control-Max-Age`.
    e `config/social/<env>.env`.
 4. Nient'altro: `gen-nginx-conf.sh` aggiunge la rotta `/social/` e la CI lo scopre da sé.
 
+> ⚠️ **Se il dominio persiste dati su un volume**, il compose deve usare
+> `${<DOM>_DATA_PATH:-./data/<dom>}` **e** il workflow deve valorizzare quella variabile con un
+> path **fuori dal workspace del runner** (`/opt/mediamgr/<dom>`, come `SOURCE_DATA_PATH` e
+> `AUDIO_DATA_PATH`). Col default relativo Docker crea il bind mount **come root dentro la
+> checkout**, e da lì in poi `actions/checkout` non riesce più a ripulire la working dir:
+> `EACCES: permission denied, rmdir .../data/<dom>` e **ogni deploy successivo fallisce**, incluso
+> quello degli altri domini. Se succede: `docker stop <dom>`, sposta i dati in `/opt/mediamgr/<dom>`,
+> `sudo rm -rf <workspace>/data`, poi rilancia il deploy.
+
 ## Aggiungere un nuovo ambiente/host
 
 1. Crea l'Environment GitHub e i suoi secret.
