@@ -47,8 +47,10 @@ jobs:
             FILES=$(git diff --name-only "$BEFORE" "${{ github.sha }}")
           fi
 
-          # File condivisi -> impattano ogni build -> tutti i domini
-          if echo "$FILES" | grep -Eq '^(Makefile|Dockerfile|\.dockerignore|requirements.*\.txt|src/app\.py|src/client/|openapi/config/|openapi/shared/)'; then
+          # File condivisi -> impattano ogni build -> tutti i domini.
+          # Incluso QUESTO workflow: se cambia il job di deploy (env, path dati, step) la modifica
+          # deve raggiungere gli host, altrimenti resta inerte finche' non cambia altro.
+          if echo "$FILES" | grep -Eq '^(Makefile|Dockerfile|\.dockerignore|requirements.*\.txt|src/app\.py|src/client/|openapi/config/|openapi/shared/|\.github/workflows/generate-api\.yml)'; then
             CHANGED="$ALL"
           else
             CAND=$(echo "$FILES" | sed -nE 's#^openapi/([^/]+)/.*#\1#p; s#^config/([^/]+)/.*#\1#p; s#^src/domains/([^/]+)/.*#\1#p; s#^docker-compose\.([^.]+)\.yml$#\1#p' | sort -u)
@@ -130,7 +132,12 @@ jobs:
       MINIO_ROOT_USER: ${{ secrets.MINIO_ROOT_USER }}
       MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
       STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET || 'media-source' }}
+      # Path DATI sull'host, uno per dominio che persiste. DEVONO stare FUORI dal workspace del
+      # runner: docker crea il bind mount come root e la checkout successiva non riuscirebbe piu'
+      # a ripulire la directory (EACCES) -> ogni deploy fallisce. Il default relativo dei compose
+      # (./data/<dom>) vale solo per lo sviluppo locale.
       SOURCE_DATA_PATH: ${{ vars.SOURCE_DATA_PATH || '/opt/mediamgr/source' }}
+      AUDIO_DATA_PATH: ${{ vars.AUDIO_DATA_PATH || '/opt/mediamgr/audio' }}
       MINIO_DATA_PATH: ${{ vars.MINIO_DATA_PATH || '/opt/mediamgr/minio' }}
     steps:
       - uses: actions/checkout@v4
