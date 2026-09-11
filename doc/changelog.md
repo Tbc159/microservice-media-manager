@@ -213,6 +213,139 @@ Commit `1386d86`, merge PR #3 `fc9abe2`.
   `montserrat bold`. In caso di più match vince il più recente.
 - Test: +4 (mock + sqlite + service + integration), suite a **121**.
 
+## 16. Catalogo font, kit e ombra/glow del testo (2026-06-30)
+
+- **`content`**: nuovo `GET /v0/content/fonts` — catalogo dei font (`font/*`) caricati su `source`,
+  referenziabili nei layer `text`/`copertina` per id o nome. Risposta `FontInfo[]`.
+- **Kit font** consigliato (free/Google Fonts): Montserrat (Black/ExtraBold/Bold/Regular),
+  Bebas Neue, Great Vibes, Pacifico — copre lo stile dei canali; si caricano via `from-url`.
+- **`composita` testo**: nuovo `shadow {color, offset{x,y}, blur, opacity}` sui layer `text` —
+  ombra portata o **glow/neon** (offset 0 + blur alto, es. "LIVE"). Implementato in
+  `layer_compositor` (Pillow `GaussianBlur`).
+- Test: +4 (compositor shadow, catalogo unit + integration), suite a **125**.
+- In sospeso/da approfondire: **preset di brand** (`report-live`/`report-talk`) come template
+  fissi, sul modello `copertina`/"21milioni" (in attesa dei dettagli).
+
+## 17. Contratto non fraintendibile + errori diagnosticabili (2026-06-30)
+
+Nessun cambio di comportamento nella generazione; il contratto viene reso non ambiguo e gli
+errori che ne derivano diagnosticabili (spunto: un client aveva usato `title` al posto di `filename`).
+
+- **`MediaRef` disambiguato** (`openapi/content`): il riferimento-stringa è il **`filename`**
+  (generato dal servizio, da rileggere dalla risposta di `POST /v0/media`), **non** il `title`.
+  Esempio con `title` ≠ `filename`.
+- **`400` diagnosticabile**: lo schema condiviso `Error` guadagna `field`, `value`, `searched_by`;
+  il dominio `content` popola questi campi (es. `field="layers[2].media"`, `searched_by="filename"`)
+  e, quando il valore coincide col `title` di un media esistente, **suggerisce il `filename`** giusto.
+- **Decisione — niente risoluzione per `title`** (motivata): i title non sono univoci; risolverli
+  imporrebbe scelta silenziosa o `409` su ogni ambiguità. Si tiene un'unica chiave (`filename`) e si
+  trasforma l'errore in suggerimento puntuale.
+- **Incoerenze `media_type` sanate**: `audio/mp3` diventa **alias legacy** di `audio/mpeg` (MIME
+  registrato) con **normalizzazione** su scrittura e query (`SourceService.normalize_media_type`);
+  aggiunto `audio/wav`; `GET /v0/media` e `GET /v0/source/media` hanno **`type` opzionale** (elenco
+  di tutto l'archivio). Il branch stale `feature/list-all-media` (senza commit propri) può essere chiuso.
+- **Contract test** (`tests/contract/`): verifica insieme che la spec dichiari `filename`/`status`
+  `required` **e** che il servizio li restituisca (guardia anti-drift bidirezionale).
+- Test: +12, suite a **137**. *In sospeso*: se aggiungere `font/ttf`/`font/otf` all'enum pubblico di
+  `media` (contrasta con la decisione precedente "font solo dalla rete interna") — da confermare.
+
+## 18. CORS domini pubblici + HTTPS del reverse-proxy (2026-09-10)
+
+Rende `media` e `content` chiamabili da un'app web su altra origine, senza esporre `source`.
+
+- **CORS nell'app** (`src/cors.py`), non in nginx (sede unica → niente header duplicati; preflight
+  testabile). Middleware ASGI outermost sui soli path pubblici: `OPTIONS` → `204` con
+  `Access-Control-Allow-Origin` (origine riecheggiata, mai `*`), `-Headers: content-type, x-api-key`,
+  `-Methods: GET, POST, OPTIONS`, `-Max-Age`. Origini da `CORS_ALLOW_ORIGINS` (vuoto → off).
+  `source` escluso. Contract test `tests/contract/test_cors_preflight.py`.
+- **HTTPS proxy** opt-in (`PROXY_TLS=1`, Let's Encrypt via DuckDNS DNS-01): server `:443` + redirect
+  `:80→443` (path ACME per i rinnovi); `nginx -t` ok. Compose monta certs e pubblica `443`. Runbook in
+  `deploy/README.md`. Certificati gitignored.
+
+## 19. `POST /v0/media/from-url` (download server-side con difese SSRF) (2026-09-10)
+
+Espone nel BFF pubblico l'upload da URL: il server scarica il contenuto e delega la creazione a
+`source`, evitando al client (file su Blossom) il doppio transito download + re-upload.
+
+- Body `{ url, title, media_type?, duration_s? }`. `media_type` assente → **dedotto dal Content-Type**;
+  tipo non accettato → **`400` col tipo rilevato** (mai `500`).
+- **Difese SSRF** (`src/domains/media/fetcher.py`): solo http/https; blocco IP
+  privati/loopback/link-local/riservati (incl. metadata `169.254.169.254`); limite dimensione (`413`),
+  timeout e max N redirect **rivalidati a ogni hop** (`502`). Env: `MEDIA_FETCH_MAX_BYTES/_TIMEOUT/_MAX_REDIRECTS`.
+- Duplicato → **`409`** (filename dedotto dall'URL = hash Blossom → dedup su `object_key`).
+- Test: URL valido, tipo non accettato, rete privata, oltre limite, duplicato + unit SSRF. Suite a **175**.
+
+## 20. Dominio `audio` — elaborazione (job persistenti, ffmpeg misurato) (2026-09-10)
+
+Nuovo dominio pubblico `audio` che porta le capacita' del vecchio servizio `ffmpeg`
+(microservices-media, letto solo come riferimento — nessuna modifica la') **senza i suoi vincoli**.
+
+- **Operazioni** (`openapi/audio/api.yaml`): `normalize`, `silence`, `convert`, `analyze`, `split`,
+  `concat`; `GET /audio/job/{id}`. Input = **riferimento** (`MediaRef` id/filename) risolto via
+  `source`; output = nuovi media (`result.media[]` con URL su `/v0/media`). **Modello a job**:
+  `POST`→`202`+`job_id`, polling. Job **persistenti** su SQLite (sopravvivono al riavvio; `running`
+  interrotti → `queued`), worker in background, claim atomico.
+- **Vincoli del vecchio rimossi**: riferimenti (non cartelle-per-op) → ordine libero e formati
+  indifferenti (anche i **wav** in `silence`); input **non distrutto**; intermedi **senza perdita**
+  (compressione solo dove si sceglie `format`); tutte le operazioni sono **job**; niente stato in
+  memoria; niente `verify=False`.
+- **DSP misurato** (verificato con ffmpeg reale nei test e2e): `normalize` =
+  `dynaudnorm f=250 g=11 m=<maxgain>` + `loudnorm` — `maxgain` alto (default 80) allinea i parlanti
+  (< 1 LU) a -16 LUFS (il default 10 di ffmpeg no); `silence` taglia anche il **silenzio
+  iniziale/finale** e lascia una pausa udibile, soglia in `dB`. `analyze` misura LUFS/true-peak/LRA/
+  **rumore di fondo**/distribuzione silenzi, associata al media (riuso).
+- **Contratto**: formati dichiarati per operazione; errori **diagnostici** (`field`/`value`/
+  `searched_by` o formato rilevato + accettati). Naming **human-readable** per job e media prodotti.
+- **Deploy**: `docker-compose.audio.yml` + `config/audio/*.env`; Dockerfile installa ffmpeg **solo**
+  per `DOMAIN=audio`; `imageio-ffmpeg` in dev per i test e2e in CI.
+- Test: +28 (builder, job store persistente, API/errori, e2e DSP reali). Suite a **203**.
+- *Nota*: `audio/wav`+`audio/mpeg` nell'enum di `media`/`source` erano gia' stati aggiunti (voce #17);
+  fatti una volta sola come da indicazione.
+
+## 21. Preset `social` e `slide` sul motore a layer (2026-09-10)
+
+`social` non era implementato (rispondeva `501`) e il formato 16:9 da copertina video si scriveva a
+mano con `composita`. Entrambi diventano **preset**: non un secondo renderer, ma una funzione pura
+che espande i campi nei **layer** del motore esistente.
+
+- **`presets.py`**: richiesta → `(canvas, layers)`, senza I/O. `social` = quadrato 1080×1080 (logo
+  in alto vincolato in altezza, testo maiuscolo centrato, logo tondo, testo inferiore); `slide` =
+  16:9 (sfondo + velo, ≤3 ospiti con altezza adattata al numero, logo, titolo con glow,
+  sottotitolo, `allineamento` left/center).
+- **Un solo percorso di codice**: `composita` e i preset passano da `ImageService._generate_layered`
+  — stessa risoluzione asset, stessi `warnings`, stessi `400`. I preset marcano ogni layer col
+  **campo della richiesta** (`_field`), così il `400` cita `logo_top`, non `layers[2].media`.
+- **Motore parametrico**: la canvas non e' piu' fissa a 1920×1080 (`render_composita(..., canvas=)`),
+  piu' due capacita' generiche usate dai preset e disponibili anche in `composita` —
+  `mask: circle` su `person`/`image` (diametro **richiesto**, cover-fit: indipendente dalle
+  proporzioni della sorgente) e `overlay {color, opacity}` su `background` (velo per la
+  leggibilita' del testo).
+- **Contratto**: `SlideRequest` nuovo, `SocialRequest` non piu' draft, `slide` nel `discriminator` e
+  in `GeneratedImage.tipo`. Il `501` resta come contratto per i tipi futuri.
+
+## 22. URL di lettura firmati (`signed_url`) per i tag del browser (2026-09-10)
+
+`GET /v0/media/{id}/content` vuole `X-API-Key` in un header, ma il browser non allega header alle
+richieste di sotto-risorsa: ogni `<img src>`/`<audio src>`/`<video src>` prendeva `401` e il
+front-end doveva scaricare i byte con `fetch` e costruire un object URL — file in memoria, niente
+cache HTTP, niente `Range`.
+
+- **`src/signed_url.py`**: token HMAC-SHA256 su `(id, scadenza)` in query string. Legato a **quel**
+  media (l'id e' dentro la firma: riusarlo altrove la invalida), in **sola lettura**, con
+  **scadenza** (`MEDIA_URL_TTL_S`, default 900 s, limitata a [30 s, 24 h]).
+- **Contratto**: nuovo schema `SignedUrlAuth` (`apiKey` in query) condiviso; su
+  `GET /media/{id}/content` la security diventa `ApiKeyAuth` **oppure** `SignedUrlAuth` (connexion
+  valuta le alternative in OR e passa la request al verificatore, cosi' il legame con l'id e'
+  crittografico e non un confronto nel controller).
+- **Risposte**: `MediaItem`, `GeneratedImage` e i media prodotti dai job `audio` portano
+  `signed_url` + `signed_url_expires_at_s` accanto a `content_url`. `&download=1` funziona
+  sull'URL firmato senza rifirmarlo.
+- **Fail-closed**: senza `MEDIA_URL_SIGNING_KEY` la firma e' spenta — i campi non compaiono e
+  nessun token e' accettato. I byte non diventano pubblici per default, e per *ottenere* un URL
+  firmato serve comunque la chiave API.
+- **Deploy**: chiave come **secret** dell'Environment (`MEDIA_URL_SIGNING_KEY`), TTL come `vars`;
+  propagate ai compose di `media`, `content` e `audio`.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

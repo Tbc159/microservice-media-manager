@@ -8,9 +8,13 @@ info:
     gia' caricati su /v0/media. Il campo `tipo` nel body seleziona il generatore:\n- `copertina` — template\
     \ fisso (uso interno \"21milioni di chiacchiere\");\n- `composita` — **motore a layer**: canvas 1920x1080,\
     \ lista ordinata di layer\n  (sfondo, persone, testo, immagini) componibili liberamente;\n- `social`\
-    \ — draft.\n\nGli asset (sfondi, persone, loghi, font) sono referenziati per **id media** o **nome\
-    \ file**\ne risolti via source sulla rete interna. L'immagine prodotta e' salvata come media `image/*`\n\
-    e se ne restituiscono gli URL per recuperarla (su /v0/media). base_path /v0 e' applicato da\nsrc/app.py.\n"
+    \ — **preset** quadrato 1080x1080 per i post;\n- `slide` — **preset** 16:9 da copertina di un video.\n\
+    \nI preset non sono un secondo motore: espandono i loro campi nei **layer** del motore di\n`composita`\
+    \ (stesse regole di posizionamento, stessi warning, stessi errori). Serve un\nlayout diverso da quello\
+    \ del preset? Si usa `composita` e si scrivono i layer a mano.\n\nGli asset (sfondi, persone, loghi,\
+    \ font) sono referenziati per **id media** o **nome file**\ne risolti via source sulla rete interna.\
+    \ L'immagine prodotta e' salvata come media `image/*`\ne se ne restituiscono gli URL per recuperarla\
+    \ (su /v0/media). base_path /v0 e' applicato da\nsrc/app.py.\n"
 servers:
 - url: http://mediamanager-dev.duckdns.org/v0
   description: 'dev (staging) - reverse-proxy esterno duckdns. Usa http: l''https ha cert self-signed.'
@@ -46,9 +50,13 @@ paths:
         \ (logo host, titolo, testo centrale,\n  fino a 5 avatar ospiti). Asset per id media o nome file.\n\
         - `composita` — attivo: **motore a layer** su canvas 1920x1080. `layers[]` ordinati\n  (z-order\
         \ = ordine array) di tipo `background`/`person`/`text`/`image`. Asset (incl. font)\n  per id o\
-        \ nome file; posizione keyword/%/px; testo con `stroke`/`box`.\n- `social` — draft: risponde **501**.\n\
-        \nL'immagine generata e' salvata come media `image/*`; la risposta contiene gli URL\n(`content_url`/`download_url`)\
-        \ su /v0/media per recuperarla e gli eventuali `warnings`.\n"
+        \ nome file; posizione keyword/%/px; testo con `stroke`/`box`.\n- `social` — attivo: preset quadrato\
+        \ 1080x1080 (logo in alto, testo centrale, logo tondo\n  in basso, testo inferiore opzionale).\n\
+        - `slide` — attivo: preset 16:9 da copertina video (sfondo con velo, titolo, sottotitolo,\n  logo,\
+        \ fino a 3 ospiti ritagliati).\n\n`social` e `slide` sono **preset del motore a layer**: espandono\
+        \ i campi in `layers[]` e\npassano dallo stesso renderer, quindi condividono warning ed errori\
+        \ con `composita`.\n\nL'immagine generata e' salvata come media `image/*`; la risposta contiene\
+        \ gli URL\n(`content_url`/`download_url`) su /v0/media per recuperarla e gli eventuali `warnings`.\n"
       security:
       - ApiKeyAuth: []
       requestBody:
@@ -71,11 +79,33 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '501':
-          description: Tipo immagine non ancora implementato (es. `social`)
+          description: Nessun generatore associato al `tipo` richiesto
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /content/fonts:
+    get:
+      operationId: list_fonts
+      tags:
+      - content
+      summary: Elenco dei font disponibili per la generazione
+      description: 'Catalogo dei font (`font/ttf`/`font/otf`) caricati su source, referenziabili nei layer
+
+        `text` (campo `font`) o in `copertina` per **id** o **nome** (risoluzione tollerante).
+
+        '
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Font disponibili
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FontInfo'
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -91,28 +121,58 @@ components:
       - $ref: '#/components/schemas/CopertinaRequest'
       - $ref: '#/components/schemas/CompositaRequest'
       - $ref: '#/components/schemas/SocialRequest'
+      - $ref: '#/components/schemas/SlideRequest'
       discriminator:
         propertyName: tipo
         mapping:
           copertina: '#/components/schemas/CopertinaRequest'
           composita: '#/components/schemas/CompositaRequest'
           social: '#/components/schemas/SocialRequest'
+          slide: '#/components/schemas/SlideRequest'
     MediaRef:
-      description: 'Riferimento a un media gia'' caricato (via POST /media): l''**id** intero del record
+      description: 'Riferimento a un media gia'' caricato (via `POST /v0/media`). Due forme:
 
-        oppure il **nome** (stringa). Il nome e'' risolto in modo **tollerante** — ignora
 
-        maiuscole/minuscole, l''estensione e il separatore (trattino/underscore/spazio):
+        - **id** — l''intero `id` del record (`MediaItem.id`).
 
-        `Montserrat-Bold.ttf`, `montserrat-bold` e `montserrat bold` coincidono. In caso di
+        - **filename** — la stringa `MediaItem.filename` (NON `title`).
 
-        piu'' corrispondenze vince la piu'' recente.
+
+        ⚠️ **`filename`, non `title`.** `MediaItem` ha due campi testuali diversi: `title`
+
+        (il titolo *che invii tu* a `POST /v0/media`) e `filename` (il nome file, **generato
+
+        dal servizio** dal file caricato). La risoluzione per stringa usa **solo `filename`**;
+
+        passare il `title` NON funziona e produce `400` (vedi la risposta `400` di
+
+        `POST /v0/content/image`, che indica il campo, il valore e che la ricerca e'' per filename).
+
+
+        Il `filename` **non e'' quello che hai inviato**: va **riletto dalla risposta** di
+
+        `POST /v0/media` (campo `filename`). Esempio: carichi un logo con
+
+        `title: "Logo Bitcoin Radio"` e ricevi `{ "id": 42, "filename": "logo-bitcoin-radio.png",
+
+        "title": "Logo Bitcoin Radio", ... }` → nei layer usi `42` **oppure**
+
+        `"logo-bitcoin-radio.png"`, **mai** `"Logo Bitcoin Radio"`.
+
+
+        Il match sul `filename` e'' **tollerante**: ignora maiuscole/minuscole, l''estensione e il
+
+        separatore (trattino/underscore/spazio), quindi `Montserrat-Bold.ttf`, `montserrat-bold`
+
+        e `montserrat bold` coincidono. In caso di piu'' corrispondenze vince la piu'' recente.
 
         '
       oneOf:
       - type: integer
+        description: id del record (MediaItem.id).
       - type: string
-      example: 12
+        description: MediaItem.filename (generato dal servizio; NON title).
+      example: 42
     CopertinaRequest:
       type: object
       required:
@@ -192,17 +252,30 @@ components:
             '
     SocialRequest:
       type: object
-      description: 'Generatore `social` (immagine quadrata 1080x1080) — schema **draft**: i campi sono
+      description: 'Preset `social`: immagine **quadrata 1080x1080** per i post.
 
-        gia'' definiti, ma il generatore non e'' ancora implementato (runtime -> **501**).
 
-        Mostra come un `tipo` diverso usi un set di campi diverso da `copertina`.
+        Non e'' un generatore a se'': i campi vengono espansi nei **layer** del motore di
+
+        `composita` e resi dallo stesso renderer. Layout fisso, dall''alto verso il basso:
+
+        sfondo a tinta unita (`colore_sfondo`) → `logo_top` (larghezza 50% della canvas, a
+
+        86px dal bordo) → `testo` centrato verticalmente e reso in **MAIUSCOLO** →
+
+        `logo_bottom` ritagliato **a cerchio** (300px, a 660px dal bordo) → `testo_bottom`
+
+        in fondo. Serve un layout diverso? `tipo: composita`, con i layer scritti a mano.
+
+
+        Asset mancanti: `logo_top` e'' obbligatorio (non risolvibile → **400** diagnosticabile),
+
+        `logo_bottom` degrada (layer saltato + `warnings`), come nel motore a layer.
 
         '
       required:
       - tipo
       - logo_top
-      - logo_bottom
       properties:
         tipo:
           type: string
@@ -212,15 +285,19 @@ components:
         logo_top:
           allOf:
           - $ref: '#/components/schemas/MediaRef'
-          description: Logo superiore (id media o nome file).
+          description: Logo superiore (id media o nome file). Obbligatorio; se non risolvibile → 400.
         logo_bottom:
           allOf:
           - $ref: '#/components/schemas/MediaRef'
-          description: Logo inferiore, ritagliato a cerchio (id media o nome file).
+          description: 'Logo inferiore, ritagliato a cerchio (id media o nome file). Assente o non
+
+            risolvibile → il layer viene saltato e la risposta porta un `warnings`.
+
+            '
         testo:
           type: string
           default: è lieto di ospitare
-          description: Testo centrale (reso in maiuscolo).
+          description: Testo centrale (reso in maiuscolo). Stringa vuota → nessun testo.
         testo_bottom:
           type: string
           nullable: true
@@ -233,6 +310,129 @@ components:
           type: string
           pattern: ^#[0-9A-Fa-f]{6}$
           default: '#ffffff'
+        font:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: 'Font dei testi (id media o nome file di un font caricato su source, vedi
+
+            `GET /v0/content/fonts`). Assente → Montserrat bundle; non risolvibile → default
+
+            Pillow + warning.
+
+            '
+        formato:
+          type: string
+          enum:
+          - image/png
+          - image/jpeg
+          - image/webp
+          default: image/png
+          description: Formato dell'immagine generata.
+    SlideRequest:
+      type: object
+      description: "Preset `slide`: **copertina 16:9 (1920x1080)** di un video — il caso d'uso finora\n\
+        coperto a mano con `composita`.\n\nCome `social`, i campi vengono espansi nei **layer** del motore\
+        \ di `composita`:\nsfondo (`sfondo` a tutta canvas, `fit`) con un **velo** a tinta unita che rende\n\
+        leggibile il testo (`colore_velo` + `velo`) → fino a 3 `persone` ritagliate,\nallineate in basso\
+        \ → `logo` in alto a sinistra → `titolo` (con glow) → `sottotitolo`.\n\n`allineamento` decide\
+        \ l'impaginazione:\n- `left` (default) — titolo e sottotitolo a sinistra (80px dal bordo), ospiti\
+        \ nella\n  fascia di destra;\n- `center` — titolo e sottotitolo centrati, ospiti distribuiti su\
+        \ tutta la larghezza.\n\nL'altezza degli ospiti si adatta al numero (1 → 70% della canvas, 2 →\
+        \ 62%, 3 → 55%) e\ntitolo/sottotitolo si posizionano nello **spazio libero**: un titolo su piu'\
+        \ righe sale\nda solo, senza sovrapporsi al sottotitolo. Serve altro? `tipo: composita`.\n"
+      required:
+      - tipo
+      - titolo
+      properties:
+        tipo:
+          type: string
+          enum:
+          - slide
+          description: Discriminatore del tipo di immagine.
+        titolo:
+          type: string
+          description: Titolo della copertina (puo' contenere \n; va a capo da solo se troppo lungo).
+          example: Bitcoin è denaro
+        sottotitolo:
+          type: string
+          nullable: true
+          description: Sottotitolo opzionale sotto il titolo.
+          example: Puntata 42 — con Alice e Bob
+        sfondo:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: 'Immagine di sfondo (id media o nome file). Assente o non risolvibile → si usa
+
+            `colore_sfondo` (con `warnings`).
+
+            '
+        fit:
+          type: string
+          enum:
+          - cover
+          - contain
+          - stretch
+          default: cover
+          description: Come adattare lo sfondo alla canvas.
+        colore_sfondo:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#111111'
+          description: Colore di fondo (usato anche come fallback dello sfondo).
+        colore_velo:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#000000'
+          description: Colore del velo steso sullo sfondo per la leggibilita' del testo.
+        velo:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.45
+          description: Opacita' del velo (0 = sfondo intatto, 1 = tinta piena).
+        colore_testo:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#ffffff'
+        dimensione_titolo:
+          type: integer
+          minimum: 1
+          default: 110
+          description: Corpo del titolo in px (il sottotitolo e' fisso a 52).
+        allineamento:
+          type: string
+          enum:
+          - left
+          - center
+          default: left
+          description: Impaginazione di titolo/sottotitolo e distribuzione degli ospiti.
+        logo:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: Logo in alto a sinistra (larghezza 260px). Non risolvibile → saltato + warning.
+        persone:
+          type: array
+          maxItems: 3
+          default: []
+          description: 'Ritagli degli ospiti (PNG con trasparenza), per id media o nome file. Oltre il
+            terzo
+
+            vengono ignorati. Non risolvibili → saltati + warning.
+
+            '
+          items:
+            $ref: '#/components/schemas/MediaRef'
+          example:
+          - 21
+          - 22
+        font_titolo:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: Font del titolo (id o nome file). Assente → Montserrat bundle.
+        font_testo:
+          allOf:
+          - $ref: '#/components/schemas/MediaRef'
+          description: Font del sottotitolo (id o nome file). Assente → Montserrat bundle.
         formato:
           type: string
           enum:
@@ -354,6 +554,56 @@ components:
           minimum: 0
           maximum: 1
           default: 1
+    Overlay:
+      type: object
+      description: 'Velo a tinta unita steso sopra lo sfondo (dopo l''immagine, sotto gli altri layer):
+        rende
+
+        leggibile il testo su una foto complessa. E'' quello che usa il preset `slide`.
+
+        '
+      properties:
+        color:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#000000'
+        opacity:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.45
+    Shadow:
+      type: object
+      description: 'Ombra o glow del testo. `offset {0,0}` + `blur` alto = effetto **glow/neon**;
+
+        offset valorizzato + `blur` basso = ombra portata.
+
+        '
+      properties:
+        color:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+          default: '#000000'
+        offset:
+          type: object
+          description: Spostamento dell'ombra in px (può essere negativo).
+          properties:
+            x:
+              type: integer
+              default: 4
+            y:
+              type: integer
+              default: 4
+        blur:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Raggio di sfocatura gaussiana (0 = ombra netta; alto = glow).
+        opacity:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 1
     BackgroundLayer:
       type: object
       required:
@@ -380,6 +630,8 @@ components:
           type: string
           pattern: ^#[0-9A-Fa-f]{6}$
           default: '#111111'
+        overlay:
+          $ref: '#/components/schemas/Overlay'
     PersonLayer:
       type: object
       required:
@@ -408,6 +660,15 @@ components:
           type: boolean
           default: false
           description: If true and the asset is missing → 400. Otherwise the layer is skipped with a warning.
+        mask:
+          type: string
+          enum:
+          - circle
+          description: 'Ritaglio del layer. `circle` = quadrato centrato + bordo circolare antialiasato
+
+            (il lato e'' il minore fra larghezza e altezza richieste; la posizione non cambia).
+
+            '
     TextLayer:
       type: object
       required:
@@ -456,6 +717,8 @@ components:
           $ref: '#/components/schemas/Stroke'
         box:
           $ref: '#/components/schemas/Box'
+        shadow:
+          $ref: '#/components/schemas/Shadow'
     ImageLayer:
       type: object
       required:
@@ -484,6 +747,15 @@ components:
           type: boolean
           default: false
           description: If true and the asset is missing → 400. Otherwise the layer is skipped with a warning.
+        mask:
+          type: string
+          enum:
+          - circle
+          description: 'Ritaglio del layer. `circle` = quadrato centrato + bordo circolare antialiasato
+
+            (il lato e'' il minore fra larghezza e altezza richieste; la posizione non cambia).
+
+            '
     GeneratedImage:
       type: object
       description: Esito della generazione; gli URL puntano a /v0/media per il recupero.
@@ -505,6 +777,7 @@ components:
           - copertina
           - composita
           - social
+          - slide
           example: copertina
         media_type:
           type: string
@@ -528,6 +801,18 @@ components:
           type: string
           description: URL (relativo) dei byte come allegato.
           example: /v0/media/101/content?download=1
+        signed_url:
+          type: string
+          description: 'URL dei byte **senza header**: token firmato, legato a questo media, in sola lettura
+
+            e a scadenza. E'' il campo da usare in `<img src>`/`<audio src>`/`<video src>`.
+
+            Assente se l''ambiente non ha una chiave di firma configurata.
+
+            '
+        signed_url_expires_at_s:
+          type: integer
+          description: Scadenza di `signed_url` (epoch, secondi).
         warnings:
           type: array
           default: []
@@ -541,11 +826,59 @@ components:
             type: string
           example:
           - 'font ''MioFont.ttf'' non trovato: usato il default Pillow'
+    FontInfo:
+      type: object
+      description: Font disponibile per la generazione (caricato su source).
+      required:
+      - id
+      - name
+      - filename
+      - media_type
+      properties:
+        id:
+          type: integer
+          example: 42
+        name:
+          type: string
+          description: Nome leggibile (title del media).
+          example: Montserrat Black
+        filename:
+          type: string
+          example: montserrat-black.ttf
+        media_type:
+          type: string
+          enum:
+          - font/ttf
+          - font/otf
+          example: font/ttf
+        size_bytes:
+          type: integer
+          nullable: true
+        created_at_s:
+          type: integer
+          example: 1700000000
     Error:
       type: object
       properties:
         detail:
           type: string
+          description: Messaggio leggibile che descrive l'errore.
+        field:
+          type: string
+          description: 'Campo della richiesta che ha causato l''errore, quando individuabile
+
+            (es. `logo_host`, `layers[2].media`). Utile per gli errori di riferimento asset.
+
+            '
+        value:
+          description: Valore ricevuto per `field` (l'input che non e' stato risolto/validato).
+        searched_by:
+          type: string
+          description: 'Come e'' stato interpretato `value` durante la risoluzione (es. `filename` o `id`):
+
+            permette al client di capire se ha usato il campo sbagliato.
+
+            '
     Health:
       type: object
       properties:

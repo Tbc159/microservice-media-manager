@@ -108,9 +108,22 @@ jobs:
     env:
       APP_ENV: ${{ needs.detect.outputs.gh_environment }}
       PROXY_HTTP_PORT: ${{ vars.PROXY_HTTP_PORT || '80' }}
+      # HTTPS del reverse-proxy (opt-in). Impostare questi `vars` nell'Environment DOPO aver
+      # emesso il certificato sull'host (runbook: deploy/README.md). Default OFF -> solo http.
+      PROXY_TLS: ${{ vars.PROXY_TLS || '0' }}
+      PROXY_HTTPS_PORT: ${{ vars.PROXY_HTTPS_PORT || '443' }}
+      PROXY_SERVER_NAME: ${{ vars.PROXY_SERVER_NAME || '_' }}
+      PROXY_CERTS_DIR: ${{ vars.PROXY_CERTS_DIR || './certs' }}
+      PROXY_ACME_WEBROOT: ${{ vars.PROXY_ACME_WEBROOT || './certbot-www' }}
+      # Origini consentite dal CORS dei domini pubblici (media, content). Vuoto -> CORS off.
+      CORS_ALLOW_ORIGINS: ${{ vars.CORS_ALLOW_ORIGINS || '' }}
       API_HOST: ${{ secrets.API_HOST }}
       API_KEY: ${{ secrets.API_KEY }}
       API_SECRET: ${{ secrets.API_SECRET }}
+      # Firma degli URL di lettura (`signed_url`). Secret ASSENTE -> firma spenta, i byte
+      # restano dietro X-API-Key: nessun ambiente diventa pubblico per distrazione.
+      MEDIA_URL_SIGNING_KEY: ${{ secrets.MEDIA_URL_SIGNING_KEY }}
+      MEDIA_URL_TTL_S: ${{ vars.MEDIA_URL_TTL_S || '' }}
       # Object storage (coll/prod). In staging non usato: STORAGE_BACKEND=local.
       STORAGE_ACCESS_KEY: ${{ secrets.STORAGE_ACCESS_KEY }}
       STORAGE_SECRET_KEY: ${{ secrets.STORAGE_SECRET_KEY }}
@@ -154,6 +167,8 @@ jobs:
         run: |
           dom="${{ matrix.domain }}"
           ok=""
+          # Base pubblica: https (con -k, hostname localhost != cert) se TLS attivo, altrimenti http.
+          if [ "${PROXY_TLS}" = "1" ]; then BASE="https://localhost:${PROXY_HTTPS_PORT}"; CURL_TLS="-k"; else BASE="http://localhost:${PROXY_HTTP_PORT}"; CURL_TLS=""; fi
           if [ -f "openapi/$dom/.internal" ]; then
             # Dominio interno: non instradato dal proxy -> verifica sulla rete docker.
             for i in $(seq 1 10); do
@@ -162,9 +177,9 @@ jobs:
               echo "tentativo $i fallito, riprovo tra 3s..."; sleep 3
             done
           else
-            url="http://localhost:${PROXY_HTTP_PORT}/v0/$dom/health"
+            url="$BASE/v0/$dom/health"
             for i in $(seq 1 10); do
-              if curl -fsS "$url"; then echo; echo "OK: $url"; ok=1; break; fi
+              if curl -fsS $CURL_TLS "$url"; then echo; echo "OK: $url"; ok=1; break; fi
               echo "tentativo $i fallito, riprovo tra 3s..."; sleep 3
             done
           fi
@@ -173,8 +188,9 @@ jobs:
       - name: Verifica BFF media -> source (envelope paginato)
         if: matrix.domain == 'media'
         run: |
-          url="http://localhost:${PROXY_HTTP_PORT}/v0/media?type=audio/m4a"
-          body=$(curl -fsS -H "X-API-Key: ${API_KEY}" "$url") || { echo "::error::media non raggiungibile"; exit 1; }
+          if [ "${PROXY_TLS}" = "1" ]; then BASE="https://localhost:${PROXY_HTTPS_PORT}"; CURL_TLS="-k"; else BASE="http://localhost:${PROXY_HTTP_PORT}"; CURL_TLS=""; fi
+          url="$BASE/v0/media?type=audio/m4a"
+          body=$(curl -fsS $CURL_TLS -H "X-API-Key: ${API_KEY}" "$url") || { echo "::error::media non raggiungibile"; exit 1; }
           echo "$body"
           echo "$body" | grep -q '"pagination"' || { echo "::error::envelope (media->source) mancante"; exit 1; }
           echo "OK: BFF media->source valido"

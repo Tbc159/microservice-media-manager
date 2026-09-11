@@ -31,17 +31,22 @@ paths:
       operationId: list_media
       tags: [media]
       summary: Lista i media (delega a source)
-      description: Envelope paginato; filtro per `type` ed eventuale `title`.
+      description: |
+        Envelope paginato. Filtri **opzionali**: `type` (MIME) e `title` (esatto).
+        Senza `type` restituisce **tutto** l'archivio (paginato). `audio/mp3` e' un alias
+        legacy di `audio/mpeg` e viene normalizzato (stesso insieme di risultati).
+        I tipi `font/*` sono **elencabili** ma non caricabili dal dominio pubblico
+        (l'upload di font avviene solo dalla rete interna, via `source`).
       security:
         - ApiKeyAuth: []
       parameters:
         - name: type
           in: query
-          required: true
-          description: MIME type dei contenuti
+          required: false
+          description: MIME type dei contenuti. Omettere per elencare tutti i tipi.
           schema:
             type: string
-            enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp]
+            enum: [audio/m4a, audio/mpeg, audio/mp3, audio/wav, video/mp4, image/png, image/jpeg, image/webp, font/ttf, font/otf]
             example: audio/m4a
         - name: title
           in: query
@@ -71,7 +76,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/MediaPagedResponse'
         '400':
-          description: Parametro `type` mancante o non valido
+          description: Parametro `type` non valido (fuori enum)
           content:
             application/json:
               schema:
@@ -97,7 +102,7 @@ paths:
                   type: string
                 media_type:
                   type: string
-                  enum: [audio/m4a, audio/mp3, video/mp4, image/png, image/jpeg, image/webp]
+                  enum: [audio/m4a, audio/mpeg, audio/mp3, audio/wav, video/mp4, image/png, image/jpeg, image/webp]
                 duration_s:
                   type: integer
                   nullable: true
@@ -116,6 +121,82 @@ paths:
                 $ref: '../shared/components.yaml#/components/schemas/Error'
         '409':
           description: Media gia' presente
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+
+  /media/from-url:
+    post:
+      operationId: upload_media_from_url
+      tags: [media]
+      summary: Crea un media scaricandolo da un URL (server-side)
+      description: |
+        Il server scarica il contenuto da `url` e crea il media (delegando l'archiviazione a
+        source), evitando al client il doppio transito (download + re-upload) di file grandi.
+        Pensato per gli URL pubblici di Blossom (archivio a contenuto indirizzato per hash).
+
+        - `media_type` opzionale: se assente e' **ricavato dal Content-Type** della risposta; se il
+          tipo (fornito o rilevato) non e' fra quelli accettati -> `400` indicando il tipo rilevato.
+        - **Difese SSRF** (l'URL arriva dall'esterno): solo http/https; host che risolve su rete
+          privata/loopback/link-local -> `400`; limite di dimensione (`413`); timeout e numero
+          massimo di redirect (rivalidati) -> `502`.
+        - Contenuto gia' presente -> `409` (come `POST /v0/media`): il client riusa il record.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, title]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: URL http/https da cui scaricare il contenuto.
+                  example: "https://blossom.example/ab12cd34ef56.png"
+                title:
+                  type: string
+                  example: "Copertina puntata 42"
+                media_type:
+                  type: string
+                  description: MIME atteso. Se omesso, dedotto dal Content-Type della risposta.
+                  enum: [audio/m4a, audio/mpeg, audio/mp3, audio/wav, video/mp4, image/png, image/jpeg, image/webp]
+                  example: image/png
+                duration_s:
+                  type: integer
+                  nullable: true
+      responses:
+        '201':
+          description: Media creato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaItem'
+        '400':
+          description: |
+            Richiesta non valida: URL non consentito (schema/host non pubblico) oppure
+            `media_type` (fornito o rilevato) fuori dai tipi accettati.
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+        '409':
+          description: Media gia' presente
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+        '413':
+          description: Contenuto oltre il limite di dimensione consentito
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Error'
+        '502':
+          description: Download fallito (URL irraggiungibile, errore remoto o troppi redirect)
           content:
             application/json:
               schema:
@@ -153,8 +234,17 @@ paths:
       description: |
         Default inline; `?download=1|true|yes|on` -> allegato. media propaga il `302` di
         source verso lo storage in coll/prod (resta fuori dai byte); in dev relaia i byte.
+
+        **Due modi di autenticarsi, in alternativa** (e' l'unica rotta con l'URL firmato):
+        - `X-API-Key` in header — i client server-side;
+        - `?token=<signed_url>` in query — i tag del browser (`<img>`/`<audio>`/`<video>`), che
+          non possono mandare header. Il token si legge dal campo `signed_url` di `MediaItem`
+          (`GET /media` o `GET /media/{id}`, che richiedono la chiave): vale solo per **quel**
+          media, in sola lettura, fino a `signed_url_expires_at_s`. `?download=1` si puo'
+          aggiungere all'URL firmato senza rifirmarlo.
       security:
         - ApiKeyAuth: []
+        - SignedUrlAuth: []
       parameters:
         - name: id
           in: path
@@ -169,6 +259,14 @@ paths:
           schema:
             type: string
             example: "1"
+        - name: token
+          in: query
+          required: false
+          description: |
+            Token dell'URL firmato (schema `SignedUrlAuth`). Alternativo a `X-API-Key`; ignorato
+            se la chiave e' presente. Non valido o scaduto -> `401`.
+          schema:
+            type: string
       responses:
         '200':
           description: Byte del file (relay da source in dev); supporta Range
@@ -205,6 +303,8 @@ components:
   securitySchemes:
     ApiKeyAuth:
       $ref: '../shared/components.yaml#/components/securitySchemes/ApiKeyAuth'
+    SignedUrlAuth:
+      $ref: '../shared/components.yaml#/components/securitySchemes/SignedUrlAuth'
   schemas:
     MediaItem:
       type: object
@@ -242,6 +342,24 @@ components:
           type: string
           description: URL (relativo) dei byte come allegato.
           example: "/v0/media/1/content?download=1"
+        signed_url:
+          type: string
+          description: |
+            URL (relativo) dei byte **utilizzabile senza header**: porta un token firmato e a
+            scadenza valido solo per questo media, in sola lettura. E' il campo da mettere in
+            `<img src>`/`<audio src>`/`<video src>` — `content_url` li' riceverebbe `401`,
+            perche' il browser non allega header alle richieste di sotto-risorsa.
+
+            Aggiungendo `&download=1` si ottiene l'allegato, senza rifirmare. **Assente** se
+            l'ambiente non ha una chiave di firma configurata: in quel caso resta `content_url`
+            con `X-API-Key`.
+          example: "/v0/media/1/content?token=v1.1757600000.3QK9x1Yb0m..."
+        signed_url_expires_at_s:
+          type: integer
+          description: |
+            Scadenza di `signed_url` (epoch, secondi). Oltre questo istante l'URL risponde `401`:
+            il client rilegge il media per ottenerne uno nuovo.
+          example: 1757600000
         metadata:
           type: object
           nullable: true

@@ -42,23 +42,37 @@ paths:
       tags:
       - media
       summary: Lista i media (delega a source)
-      description: Envelope paginato; filtro per `type` ed eventuale `title`.
+      description: 'Envelope paginato. Filtri **opzionali**: `type` (MIME) e `title` (esatto).
+
+        Senza `type` restituisce **tutto** l''archivio (paginato). `audio/mp3` e'' un alias
+
+        legacy di `audio/mpeg` e viene normalizzato (stesso insieme di risultati).
+
+        I tipi `font/*` sono **elencabili** ma non caricabili dal dominio pubblico
+
+        (l''upload di font avviene solo dalla rete interna, via `source`).
+
+        '
       security:
       - ApiKeyAuth: []
       parameters:
       - name: type
         in: query
-        required: true
-        description: MIME type dei contenuti
+        required: false
+        description: MIME type dei contenuti. Omettere per elencare tutti i tipi.
         schema:
           type: string
           enum:
           - audio/m4a
+          - audio/mpeg
           - audio/mp3
+          - audio/wav
           - video/mp4
           - image/png
           - image/jpeg
           - image/webp
+          - font/ttf
+          - font/otf
           example: audio/m4a
       - name: title
         in: query
@@ -88,7 +102,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/MediaPagedResponse'
         '400':
-          description: Parametro `type` mancante o non valido
+          description: Parametro `type` non valido (fuori enum)
           content:
             application/json:
               schema:
@@ -120,7 +134,9 @@ paths:
                   type: string
                   enum:
                   - audio/m4a
+                  - audio/mpeg
                   - audio/mp3
+                  - audio/wav
                   - video/mp4
                   - image/png
                   - image/jpeg
@@ -143,6 +159,91 @@ paths:
                 $ref: '#/components/schemas/Error'
         '409':
           description: Media gia' presente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /media/from-url:
+    post:
+      operationId: upload_media_from_url
+      tags:
+      - media
+      summary: Crea un media scaricandolo da un URL (server-side)
+      description: "Il server scarica il contenuto da `url` e crea il media (delegando l'archiviazione\
+        \ a\nsource), evitando al client il doppio transito (download + re-upload) di file grandi.\nPensato\
+        \ per gli URL pubblici di Blossom (archivio a contenuto indirizzato per hash).\n\n- `media_type`\
+        \ opzionale: se assente e' **ricavato dal Content-Type** della risposta; se il\n  tipo (fornito\
+        \ o rilevato) non e' fra quelli accettati -> `400` indicando il tipo rilevato.\n- **Difese SSRF**\
+        \ (l'URL arriva dall'esterno): solo http/https; host che risolve su rete\n  privata/loopback/link-local\
+        \ -> `400`; limite di dimensione (`413`); timeout e numero\n  massimo di redirect (rivalidati)\
+        \ -> `502`.\n- Contenuto gia' presente -> `409` (come `POST /v0/media`): il client riusa il record.\n"
+      security:
+      - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - url
+              - title
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: URL http/https da cui scaricare il contenuto.
+                  example: https://blossom.example/ab12cd34ef56.png
+                title:
+                  type: string
+                  example: Copertina puntata 42
+                media_type:
+                  type: string
+                  description: MIME atteso. Se omesso, dedotto dal Content-Type della risposta.
+                  enum:
+                  - audio/m4a
+                  - audio/mpeg
+                  - audio/mp3
+                  - audio/wav
+                  - video/mp4
+                  - image/png
+                  - image/jpeg
+                  - image/webp
+                  example: image/png
+                duration_s:
+                  type: integer
+                  nullable: true
+      responses:
+        '201':
+          description: Media creato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaItem'
+        '400':
+          description: 'Richiesta non valida: URL non consentito (schema/host non pubblico) oppure
+
+            `media_type` (fornito o rilevato) fuori dai tipi accettati.
+
+            '
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Media gia' presente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Contenuto oltre il limite di dimensione consentito
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Download fallito (URL irraggiungibile, errore remoto o troppi redirect)
           content:
             application/json:
               schema:
@@ -177,13 +278,17 @@ paths:
       tags:
       - media
       summary: Byte del media (play inline o download)
-      description: 'Default inline; `?download=1|true|yes|on` -> allegato. media propaga il `302` di
-
-        source verso lo storage in coll/prod (resta fuori dai byte); in dev relaia i byte.
-
-        '
+      description: "Default inline; `?download=1|true|yes|on` -> allegato. media propaga il `302` di\n\
+        source verso lo storage in coll/prod (resta fuori dai byte); in dev relaia i byte.\n\n**Due modi\
+        \ di autenticarsi, in alternativa** (e' l'unica rotta con l'URL firmato):\n- `X-API-Key` in header\
+        \ — i client server-side;\n- `?token=<signed_url>` in query — i tag del browser (`<img>`/`<audio>`/`<video>`),\
+        \ che\n  non possono mandare header. Il token si legge dal campo `signed_url` di `MediaItem`\n\
+        \  (`GET /media` o `GET /media/{id}`, che richiedono la chiave): vale solo per **quel**\n  media,\
+        \ in sola lettura, fino a `signed_url_expires_at_s`. `?download=1` si puo'\n  aggiungere all'URL\
+        \ firmato senza rifirmarlo.\n"
       security:
       - ApiKeyAuth: []
+      - SignedUrlAuth: []
       parameters:
       - name: id
         in: path
@@ -198,6 +303,16 @@ paths:
         schema:
           type: string
           example: '1'
+      - name: token
+        in: query
+        required: false
+        description: 'Token dell''URL firmato (schema `SignedUrlAuth`). Alternativo a `X-API-Key`; ignorato
+
+          se la chiave e'' presente. Non valido o scaduto -> `401`.
+
+          '
+        schema:
+          type: string
       responses:
         '200':
           description: Byte del file (relay da source in dev); supporta Range
@@ -235,6 +350,35 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
+    SignedUrlAuth:
+      type: apiKey
+      in: query
+      name: token
+      description: 'Token di lettura **firmato e a scadenza** per un singolo media, alternativo a
+
+        `X-API-Key` sulla sola rotta dei byte (`GET /media/{id}/content`).
+
+
+        Serve ai tag del browser (`<img src>`, `<audio src>`, `<video src>`): le richieste di
+
+        sotto-risorsa **non portano header**, quindi con la sola chiave API riceverebbero `401`
+
+        e il front-end dovrebbe scaricare i byte via `fetch` tenendoli in memoria, senza cache
+
+        HTTP ne'' `Range`.
+
+
+        Il token e'' un HMAC su `(id, scadenza)`: vale **solo per quel media** (l''id e'' dentro la
+
+        firma: riusarlo altrove la invalida), **solo in lettura** e **solo fino alla scadenza**.
+
+        Si ottiene dai campi `signed_url`/`signed_url_expires_at_s` delle risposte, che
+
+        richiedono la chiave API: i byte non sono mai pubblici per default. Se l''ambiente non ha
+
+        una chiave di firma configurata i campi non compaiono e nessun token e'' accettato.
+
+        '
   schemas:
     MediaItem:
       type: object
@@ -283,6 +427,35 @@ components:
           type: string
           description: URL (relativo) dei byte come allegato.
           example: /v0/media/1/content?download=1
+        signed_url:
+          type: string
+          description: 'URL (relativo) dei byte **utilizzabile senza header**: porta un token firmato
+            e a
+
+            scadenza valido solo per questo media, in sola lettura. E'' il campo da mettere in
+
+            `<img src>`/`<audio src>`/`<video src>` — `content_url` li'' riceverebbe `401`,
+
+            perche'' il browser non allega header alle richieste di sotto-risorsa.
+
+
+            Aggiungendo `&download=1` si ottiene l''allegato, senza rifirmare. **Assente** se
+
+            l''ambiente non ha una chiave di firma configurata: in quel caso resta `content_url`
+
+            con `X-API-Key`.
+
+            '
+          example: /v0/media/1/content?token=v1.1757600000.3QK9x1Yb0m...
+        signed_url_expires_at_s:
+          type: integer
+          description: 'Scadenza di `signed_url` (epoch, secondi). Oltre questo istante l''URL risponde
+            `401`:
+
+            il client rilegge il media per ottenerne uno nuovo.
+
+            '
+          example: 1757600000
         metadata:
           type: object
           nullable: true
@@ -329,6 +502,23 @@ components:
       properties:
         detail:
           type: string
+          description: Messaggio leggibile che descrive l'errore.
+        field:
+          type: string
+          description: 'Campo della richiesta che ha causato l''errore, quando individuabile
+
+            (es. `logo_host`, `layers[2].media`). Utile per gli errori di riferimento asset.
+
+            '
+        value:
+          description: Valore ricevuto per `field` (l'input che non e' stato risolto/validato).
+        searched_by:
+          type: string
+          description: 'Come e'' stato interpretato `value` durante la risoluzione (es. `filename` o `id`):
+
+            permette al client di capire se ha usato il campo sbagliato.
+
+            '
     Health:
       type: object
       properties:

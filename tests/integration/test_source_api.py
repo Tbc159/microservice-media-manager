@@ -92,6 +92,23 @@ def test_invalid_type_rejected(client):
     assert r.status_code == 400
 
 
+def test_list_all_without_type(client):
+    # type omesso -> tutto l'archivio (non piu' 400 "type mancante")
+    r = client.get("/v0/source/media", headers=_KEY)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["pagination"]["total"] == 3          # 2 m4a + 1 mpeg (seed)
+    assert {"audio/m4a", "audio/mpeg"} <= {i["media_type"] for i in body["items"]}
+
+
+def test_mp3_alias_query_normalized(client):
+    # filtrare per l'alias legacy audio/mp3 restituisce i record audio/mpeg
+    r = client.get("/v0/source/media?type=audio/mp3", headers=_KEY)
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert items and all(i["media_type"] == "audio/mpeg" for i in items)
+
+
 # --- POST /v0/source/media (upload server-side multipart) ---
 
 

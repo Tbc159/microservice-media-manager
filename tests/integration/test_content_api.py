@@ -30,8 +30,20 @@ class _FakeGateway:
     def resolve_filename(self, filename):
         return {"id": 50, "filename": filename, "media_type": "image/png"} if filename == "logo.png" else None
 
+    def find_by_title(self, title, page_size=10):
+        if title == "Logo Bianco":
+            return [{"id": 60, "title": "Logo Bianco", "filename": "logo-bianco.png",
+                     "media_type": "image/png"}]
+        return []
+
     def get_bytes(self, media_id):
         return _LOGO if media_id in (10, 50) else None
+
+    def list_by_type(self, media_type, page_size=100):
+        if media_type == "font/ttf":
+            return [{"id": 70, "title": "Montserrat Black", "filename": "montserrat-black.ttf",
+                     "media_type": "font/ttf", "size_bytes": 100, "created_at_s": 1700000000}]
+        return []
 
     def upload_image(self, *, title, media_type, filename, data):
         return UploadResult(
@@ -60,6 +72,17 @@ def client(monkeypatch):
 
 def test_health(client):
     assert client.get("/v0/content/health").json() == {"status": "ok"}
+
+
+def test_list_fonts(client):
+    r = client.get("/v0/content/fonts", headers=_KEY)
+    assert r.status_code == 200
+    fonts = r.json()
+    assert any(f["name"] == "Montserrat Black" and f["media_type"] == "font/ttf" for f in fonts)
+
+
+def test_list_fonts_requires_key(client):
+    assert client.get("/v0/content/fonts").status_code == 401
 
 
 def test_requires_api_key(client):
@@ -92,13 +115,33 @@ def test_logo_by_filename(client):
     assert r.status_code == 201
 
 
-def test_missing_logo_is_400(client):
+def test_missing_logo_is_400_with_diagnostic_body(client):
     r = client.post(
         "/v0/content/image",
         json={"tipo": "copertina", "titolo": "B", "testo_centrale": "c", "logo_host": 404},
         headers=_KEY,
     )
     assert r.status_code == 400
+    body = r.json()
+    assert body["field"] == "logo_host"
+    assert body["value"] == 404
+    assert body["searched_by"] == "id"
+    assert "detail" in body
+
+
+def test_400_hints_filename_when_title_passed(client):
+    # il client passa il TITLE 'Logo Bianco' al posto del filename -> 400 che suggerisce il filename
+    r = client.post(
+        "/v0/content/image",
+        json={"tipo": "copertina", "titolo": "B", "testo_centrale": "c",
+              "logo_host": "Logo Bianco"},
+        headers=_KEY,
+    )
+    assert r.status_code == 400
+    body = r.json()
+    assert body["field"] == "logo_host"
+    assert body["searched_by"] == "filename"
+    assert "logo-bianco.png" in body["detail"]
 
 
 def test_generate_composita_201(client):
@@ -130,13 +173,36 @@ def test_composita_invalid_layer_type_400(client):
     assert r.status_code == 400
 
 
-def test_social_is_501(client):
+def test_social_preset_201(client):
     r = client.post(
         "/v0/content/image",
-        json={"tipo": "social", "logo_top": 10, "logo_bottom": 10},
+        json={"tipo": "social", "logo_top": 10, "logo_bottom": 10, "testo": "ospite di oggi"},
         headers=_KEY,
     )
-    assert r.status_code == 501
+    assert r.status_code == 201, r.json()
+    assert r.json()["tipo"] == "social"
+
+
+def test_slide_preset_201(client):
+    r = client.post(
+        "/v0/content/image",
+        json={"tipo": "slide", "titolo": "Bitcoin è denaro", "sottotitolo": "Puntata 42",
+              "sfondo": 10, "persone": [10], "allineamento": "center"},
+        headers=_KEY,
+    )
+    assert r.status_code == 201, r.json()
+    assert r.json()["tipo"] == "slide"
+
+
+def test_slide_requires_titolo(client):
+    r = client.post("/v0/content/image", json={"tipo": "slide"}, headers=_KEY)
+    assert r.status_code in (400, 422)
+
+
+def test_unknown_tipo_is_rejected_by_the_contract(client):
+    # il discriminator non ha una mappa per `carosello`: la richiesta non passa la validazione
+    r = client.post("/v0/content/image", json={"tipo": "carosello"}, headers=_KEY)
+    assert r.status_code in (400, 422)
 
 
 def test_missing_required_field_is_422_or_400(client):
@@ -147,3 +213,17 @@ def test_missing_required_field_is_422_or_400(client):
         headers=_KEY,
     )
     assert r.status_code in (400, 422)
+
+
+def test_generated_image_carries_a_signed_url(client, monkeypatch):
+    """L'immagine appena generata si mostra in un <img> senza un giro extra su GET /v0/media."""
+    monkeypatch.setenv("MEDIA_URL_SIGNING_KEY", "chiave-di-test")
+    r = client.post(
+        "/v0/content/image",
+        json={"tipo": "slide", "titolo": "Bitcoin è denaro"},
+        headers=_KEY,
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["signed_url"].startswith(f"/v0/media/{body['id']}/content?token=")
+    assert body["signed_url_expires_at_s"] > 0

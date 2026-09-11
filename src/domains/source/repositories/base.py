@@ -41,12 +41,13 @@ class SourceMediaRepository(Protocol):
 
     def find(
         self,
-        media_type: str,
+        media_type: Optional[str],
         title: Optional[str],
         page: int,
         page_size: int,
     ) -> tuple[list[dict], int]:
-        """Restituisce (items, total_count) filtrando per media_type ed eventuale title."""
+        """Restituisce (items, total_count). `media_type`/`title` a None = nessun filtro
+        su quella dimensione (media_type None -> tutti i tipi)."""
         ...
 
     def get(self, media_id: int) -> Optional[dict]:

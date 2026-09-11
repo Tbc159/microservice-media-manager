@@ -1,3 +1,5 @@
 pytest>=8
-ruff>=0.5
+ruff==0.16.6
 schemathesis>=3.30
+# Binario ffmpeg statico per i test e2e del dominio audio (verifica DSP reale in CI).
+imageio-ffmpeg>=0.5

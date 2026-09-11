@@ -7,6 +7,25 @@ components:
       in: header
       name: X-API-Key
       x-apikeyInfoFunc: src.security.api_key_info
+    SignedUrlAuth:
+      type: apiKey
+      in: query
+      name: token
+      description: |
+        Token di lettura **firmato e a scadenza** per un singolo media, alternativo a
+        `X-API-Key` sulla sola rotta dei byte (`GET /media/{id}/content`).
+
+        Serve ai tag del browser (`<img src>`, `<audio src>`, `<video src>`): le richieste di
+        sotto-risorsa **non portano header**, quindi con la sola chiave API riceverebbero `401`
+        e il front-end dovrebbe scaricare i byte via `fetch` tenendoli in memoria, senza cache
+        HTTP ne' `Range`.
+
+        Il token e' un HMAC su `(id, scadenza)`: vale **solo per quel media** (l'id e' dentro la
+        firma: riusarlo altrove la invalida), **solo in lettura** e **solo fino alla scadenza**.
+        Si ottiene dai campi `signed_url`/`signed_url_expires_at_s` delle risposte, che
+        richiedono la chiave API: i byte non sono mai pubblici per default. Se l'ambiente non ha
+        una chiave di firma configurata i campi non compaiono e nessun token e' accettato.
+      x-apikeyInfoFunc: src.security.signed_url_info
 
   schemas:
     Health:
@@ -20,6 +39,19 @@ components:
       properties:
         detail:
           type: string
+          description: Messaggio leggibile che descrive l'errore.
+        field:
+          type: string
+          description: |
+            Campo della richiesta che ha causato l'errore, quando individuabile
+            (es. `logo_host`, `layers[2].media`). Utile per gli errori di riferimento asset.
+        value:
+          description: Valore ricevuto per `field` (l'input che non e' stato risolto/validato).
+        searched_by:
+          type: string
+          description: |
+            Come e' stato interpretato `value` durante la risoluzione (es. `filename` o `id`):
+            permette al client di capire se ha usato il campo sbagliato.
 
     PaginationMeta:
       type: object

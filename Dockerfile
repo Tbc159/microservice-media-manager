@@ -14,6 +14,12 @@ ENV DOMAIN=${DOMAIN} \
 
 WORKDIR /app
 
+# ffmpeg SOLO per il dominio audio (elaborazione): non appesantisce media/content/source.
+RUN if [ "$DOMAIN" = "audio" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends ffmpeg && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

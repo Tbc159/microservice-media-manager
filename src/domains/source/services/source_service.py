@@ -28,6 +28,18 @@ class DownloadTarget:
 # abbastanza corti da non diventare link permanenti condivisibili.
 _STREAM_URL_TTL_S = 3600
 
+# Alias MIME legacy -> forma canonica registrata. `audio/mp3` non e' un MIME registrato
+# (lo e' `audio/mpeg`): lo normalizziamo cosi' archiviazione e query usano un unico valore
+# e filtrare per l'uno o per l'altro restituisce lo stesso insieme.
+_MEDIA_TYPE_ALIASES = {"audio/mp3": "audio/mpeg"}
+
+
+def normalize_media_type(media_type: Optional[str]) -> Optional[str]:
+    """Forma canonica del MIME type (None resta None). Idempotente."""
+    if media_type is None:
+        return None
+    return _MEDIA_TYPE_ALIASES.get(media_type.strip().lower(), media_type)
+
 
 class SourceService:
     def __init__(self, repo: SourceMediaRepository, storage: StorageBackend) -> None:
@@ -56,12 +68,12 @@ class SourceService:
 
     def query(
         self,
-        media_type: str,
+        media_type: Optional[str] = None,
         title: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict:
-        records, total = self._repo.find(media_type, title, page, page_size)
+        records, total = self._repo.find(normalize_media_type(media_type), title, page, page_size)
         total_pages = math.ceil(total / page_size) if total > 0 else 0
         return {
             "items": [self._to_dto(r) for r in records],
@@ -89,6 +101,7 @@ class SourceService:
     ) -> dict:
         """Upload server-side: prima il metadato (rileva i duplicati senza scrivere
         byte orfani), poi i byte nello storage. Restituisce il record creato."""
+        media_type = normalize_media_type(media_type)
         object_key = self._object_key(media_type, filename)
         new_id = self._repo.insert(
             title=title,

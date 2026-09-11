@@ -3,12 +3,16 @@
 Delega all'ImageService (assemblato dal factory) e traduce gli esiti in HTTP:
 - 201 con il DTO GeneratedImage;
 - 400 se un asset (logo/ospite) non esiste;
-- 501 se il `tipo` richiesto non e' ancora implementato (es. social).
+- 501 se il `tipo` richiesto non ha un generatore associato.
 """
 from src.domains.content.errors import AssetNotFound, TipoNonImplementato
 from src.domains.content.factory import build_image_service
 
 _service = build_image_service()
+
+
+def list_fonts():
+    return _service.list_fonts(), 200
 
 
 def generate_image(body: dict):
@@ -17,5 +21,5 @@ def generate_image(body: dict):
     except TipoNonImplementato as exc:
         return {"detail": f"tipo non ancora implementato: {exc.tipo}"}, 501
     except AssetNotFound as exc:
-        return {"detail": f"asset non trovato: {exc.ref}"}, 400
+        return exc.to_body(), 400
     return item, 201

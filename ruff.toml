@@ -1,0 +1,13 @@
+# Configurazione lint ESPLICITA: il gate e' definito dal repo, non dai default del tool.
+#
+# Perche': fino a ruff 0.15 i default erano ["E4","E7","E9","F"]; ruff 0.16 li ha allargati
+# (UP/I/RUF/PL/SIM/PERF/FURB/DTZ/...). Con `ruff>=0.5` non pinnato la CI ha aggiornato da sola
+# e il lint e' passato da 0 a 162 errori senza che il codice cambiasse. Selezione esplicita +
+# versione pinnata in requirements-dev.txt = stesso risultato in locale e in CI.
+#
+# Per adottare le regole nuove (import sorting, pyupgrade, ...) basta allargare `select`:
+# sono in gran parte auto-correggibili con `ruff check --fix`.
+line-length = 100
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

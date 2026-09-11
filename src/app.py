@@ -21,6 +21,8 @@ from pathlib import Path
 
 import connexion
 
+from src.cors import allowed_origins_from_env, install_cors
+
 OPENAPI_DIR = Path(__file__).resolve().parent.parent / "openapi"
 
 
@@ -28,6 +30,11 @@ def discover_domains():
     """Un dominio per ogni openapi/<dominio>/api.yaml. Zero hardcoding:
     aggiungere openapi/social/api.yaml basta a creare il dominio 'social'."""
     return sorted(p.parent.name for p in OPENAPI_DIR.glob("*/api.yaml"))
+
+
+def _is_internal(domain: str) -> bool:
+    """Dominio interno = marker openapi/<dom>/.internal (non instradato dal proxy)."""
+    return (OPENAPI_DIR / domain / ".internal").exists()
 
 
 def create_app(domains=None, mock=False):
@@ -47,6 +54,10 @@ def create_app(domains=None, mock=False):
             strict_validation=True,
             validate_responses=True,
         )
+    # CORS solo sui domini PUBBLICI (source, interno, resta escluso). Gestito qui e NON in
+    # nginx per evitare header duplicati e per poter testare il preflight (vedi src/cors.py).
+    public_domains = [d for d in domains if not _is_internal(d)]
+    install_cors(app, public_domains, allowed_origins_from_env())
     return app
 
 

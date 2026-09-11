@@ -30,10 +30,29 @@ def test_query_all_by_type_returns_matching():
     assert all(i["media_type"] == "audio/m4a" for i in result["items"])
 
 
-def test_query_mp3_returns_only_mp3():
-    result = _svc().query(media_type="audio/mp3")
-    assert result["items"]
-    assert all(i["media_type"] == "audio/mp3" for i in result["items"])
+def test_query_mp3_alias_normalized_to_mpeg():
+    # audio/mp3 e' un alias legacy: la query lo normalizza a audio/mpeg (MIME registrato)
+    # e restituisce i record memorizzati come audio/mpeg.
+    for query_type in ("audio/mp3", "audio/mpeg"):
+        result = _svc().query(media_type=query_type)
+        assert result["items"], query_type
+        assert all(i["media_type"] == "audio/mpeg" for i in result["items"]), query_type
+
+
+def test_create_mp3_alias_stored_as_mpeg(tmp_path):
+    svc = _svc_fs(tmp_path)
+    item = svc.create(title="S", media_type="audio/mp3", filename="s.mp3", data=b"x")
+    assert item["media_type"] == "audio/mpeg"                  # normalizzato in scrittura
+    # e recuperabile filtrando per entrambe le forme
+    assert svc.query(media_type="audio/mp3")["items"]
+    assert (tmp_path / "audio/mpeg/s.mp3").read_bytes() == b"x"
+
+
+def test_query_all_no_type_returns_everything():
+    result = _svc().query()               # nessun filtro -> tutto l'archivio
+    types = {i["media_type"] for i in result["items"]}
+    assert {"audio/m4a", "audio/mpeg"} <= types
+    assert result["pagination"]["total"] == len(result["items"]) >= 3
 
 
 def test_query_by_exact_title():

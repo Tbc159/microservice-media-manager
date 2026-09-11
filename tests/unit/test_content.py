@@ -11,7 +11,7 @@ from PIL import Image
 
 from src.domains.content.errors import AssetNotFound, TipoNonImplementato
 from src.domains.content.gateway import UploadResult
-from src.domains.content.services import copertina_renderer, layer_compositor
+from src.domains.content.services import copertina_renderer, layer_compositor, presets
 from src.domains.content.services.image_service import ImageService
 
 
@@ -37,12 +37,30 @@ class _FakeGateway:
             return {"id": 50, "filename": "logo.png", "media_type": "image/png"}
         return None
 
+    def list_by_type(self, media_type, page_size=100):
+        if media_type == "font/ttf":
+            return [
+                {"id": 70, "title": "Montserrat Black", "filename": "montserrat-black.ttf",
+                 "media_type": "font/ttf", "size_bytes": 100, "created_at_s": 1700000000},
+                {"id": 71, "title": "Bebas Neue", "filename": "bebas-neue.ttf",
+                 "media_type": "font/ttf", "size_bytes": 90, "created_at_s": 1700000001},
+            ]
+        return []
+
+    def find_by_title(self, title, page_size=10):
+        # "Logo Bianco" e' il *title* di un media il cui filename e' 'logo-bianco.png'
+        if title == "Logo Bianco":
+            return [{"id": 60, "title": "Logo Bianco", "filename": "logo-bianco.png",
+                     "media_type": "image/png"}]
+        return []
+
     def get_bytes(self, media_id):
         return {10: _LOGO, 50: _LOGO, 21: _AVATAR}.get(media_id)  # 22 -> None
 
     def upload_image(self, *, title, media_type, filename, data):
         self.uploaded.append(
-            {"title": title, "media_type": media_type, "filename": filename, "size": len(data)}
+            {"title": title, "media_type": media_type, "filename": filename,
+             "size": len(data), "data": data}
         )
         return UploadResult(
             201,
@@ -168,11 +186,45 @@ def test_logo_by_filename_is_resolved():
     assert item["id"] == 99
 
 
-def test_missing_logo_raises_assetnotfound():
-    with pytest.raises(AssetNotFound):
+def test_missing_logo_raises_assetnotfound_with_field_and_id_search():
+    with pytest.raises(AssetNotFound) as ei:
         _svc().generate(
             {"tipo": "copertina", "titolo": "B", "testo_centrale": "c", "logo_host": 404}
         )
+    exc = ei.value
+    assert exc.field == "logo_host"
+    assert exc.value == 404
+    assert exc.searched_by == "id"                 # riferimento intero -> ricerca per id
+    assert exc.title_matches == []
+
+
+def test_missing_logo_by_string_searches_filename_and_hints_title():
+    # il client ha passato il TITLE ("Logo Bianco") invece del filename: l'errore lo spiega
+    with pytest.raises(AssetNotFound) as ei:
+        _svc().generate(
+            {"tipo": "copertina", "titolo": "B", "testo_centrale": "c",
+             "logo_host": "Logo Bianco"}
+        )
+    exc = ei.value
+    assert exc.field == "logo_host"
+    assert exc.searched_by == "filename"
+    assert exc.title_matches == [{"id": 60, "filename": "logo-bianco.png"}]
+    body = exc.to_body()
+    assert body["field"] == "logo_host"
+    assert body["searched_by"] == "filename"
+    assert "title" in body["detail"] and "logo-bianco.png" in body["detail"]
+
+
+def test_composita_required_layer_field_path():
+    with pytest.raises(AssetNotFound) as ei:
+        _svc().generate({
+            "tipo": "composita",
+            "layers": [
+                {"type": "background", "fallback_color": "#000000"},
+                {"type": "person", "media": 404, "required": True},
+            ],
+        })
+    assert ei.value.field == "layers[1].media"
 
 
 def test_missing_ospite_uses_placeholder_and_succeeds():
@@ -184,9 +236,10 @@ def test_missing_ospite_uses_placeholder_and_succeeds():
     assert item["id"] == 99
 
 
-def test_social_not_implemented():
+def test_tipo_senza_generatore_solleva_501():
+    """Il contratto 501 resta per un `tipo` futuro senza generatore associato."""
     with pytest.raises(TipoNonImplementato):
-        _svc().generate({"tipo": "social", "logo_top": 10, "logo_bottom": 21})
+        _svc().generate({"tipo": "carosello", "logo_top": 10})
 
 
 # ── Controller (mappatura HTTP) ────────────────────────────────────────────────
@@ -206,9 +259,12 @@ def test_controller_maps_status_codes(monkeypatch):
     )
     assert status == 400
 
-    _, status = content_controller.generate_image(
+    ok, status = content_controller.generate_image(
         {"tipo": "social", "logo_top": 10, "logo_bottom": 21}
     )
+    assert status == 201 and ok["tipo"] == "social"
+
+    _, status = content_controller.generate_image({"tipo": "carosello"})
     assert status == 501
 
 
@@ -319,3 +375,150 @@ def test_composita_missing_background_falls_back_with_warning():
     })
     assert item["id"] == 99
     assert any("sfondo" in w and "404" in w for w in item["warnings"])
+
+
+def test_compositor_text_shadow_and_glow():
+    raw, _ = layer_compositor.render_composita([
+        {"type": "background", "fallback_color": "#001020", "image_bytes": None},
+        {"type": "text", "content": "LIVE", "x": "center", "y": "center", "font_size": 180,
+         "color": "#ff3333",
+         "shadow": {"color": "#ff0000", "offset": {"x": 0, "y": 0}, "blur": 25, "opacity": 0.9}},
+        {"type": "text", "content": "drop", "x": "left", "y": "top", "font_size": 70,
+         "color": "#ffffff", "shadow": {"color": "#000000", "offset": {"x": 6, "y": 6}, "blur": 3}},
+    ])
+    assert Image.open(io.BytesIO(raw)).size == (1920, 1080)
+
+
+# ── catalogo font ───────────────────────────────────────────────────────────────
+
+def test_list_fonts_catalog():
+    fonts = ImageService(_FakeGateway()).list_fonts()
+    assert [f["name"] for f in fonts] == ["Bebas Neue", "Montserrat Black"]   # ordinati per nome
+    assert fonts[0]["filename"] == "bebas-neue.ttf"
+    assert fonts[0]["media_type"] == "font/ttf"
+
+
+# ── Preset (social / slide): layer generati, stesso motore ─────────────────────
+
+def test_social_preset_builds_square_layers():
+    """Il preset e' una funzione pura: nessuna I/O, solo la lista di layer + la canvas."""
+    canvas, layers = presets.build("social", {
+        "tipo": "social", "logo_top": 10, "logo_bottom": 21,
+        "testo": "è lieto di ospitare", "testo_bottom": "puntata 42",
+    })
+    assert canvas == (1080, 1080)
+    assert [ly["type"] for ly in layers] == ["background", "image", "text", "image", "text"]
+    assert layers[2]["content"] == "È LIETO DI OSPITARE"        # maiuscolo
+    assert layers[3]["mask"] == "circle"                        # logo inferiore tondo
+    assert layers[1]["_field"] == "logo_top"                    # diagnostica sul campo richiesta
+
+
+def test_social_generates_1080_square_image():
+    gw = _FakeGateway()
+    item = ImageService(gw).generate({"tipo": "social", "logo_top": 10, "logo_bottom": 21})
+    assert item["tipo"] == "social" and item["id"] == 99
+    assert gw.uploaded[0]["filename"].startswith("social-")
+    assert Image.open(io.BytesIO(gw.uploaded[0]["data"])).size == (1080, 1080)
+
+
+def test_social_missing_logo_top_is_400_on_the_request_field():
+    """Il 400 cita `logo_top`, non `layers[1].media`: il chiamante vede il proprio campo."""
+    with pytest.raises(AssetNotFound) as exc:
+        _svc().generate({"tipo": "social", "logo_top": 404})
+    assert exc.value.field == "logo_top" and exc.value.searched_by == "id"
+
+
+def test_social_missing_logo_bottom_degrades_with_warning():
+    item = _svc().generate({"tipo": "social", "logo_top": 10, "logo_bottom": 404})
+    assert item["id"] == 99
+    assert any("logo_bottom" in w for w in item["warnings"])
+
+
+def test_slide_preset_layout_and_person_count():
+    canvas, layers = presets.build("slide", {
+        "tipo": "slide", "titolo": "Bitcoin è denaro", "sottotitolo": "Puntata 42",
+        "sfondo": 10, "logo": 10, "persone": [21, 21, 21, 21],
+    })
+    assert canvas == (1920, 1080)
+    types = [ly["type"] for ly in layers]
+    assert types == ["background", "person", "person", "person", "image", "text", "text"]
+    assert layers[0]["overlay"]["opacity"] == 0.45              # velo di default
+    assert all(ly["size"]["height"] == "55%" for ly in layers[1:4])  # 3 ospiti -> piu' bassi
+    assert layers[5]["content"] == "Bitcoin è denaro"
+
+
+def test_slide_center_alignment_moves_text_and_people():
+    _, left = presets.build("slide", {"tipo": "slide", "titolo": "T", "persone": [21]})
+    _, center = presets.build("slide", {"tipo": "slide", "titolo": "T", "persone": [21],
+                                        "allineamento": "center"})
+    assert left[-1]["x"] == "80px" and left[-1]["align"] == "left"
+    assert center[-1]["x"] == "center" and center[-1]["align"] == "center"
+    assert left[1]["x"] == "92%" and center[1]["x"] == "50%"
+
+
+def test_slide_generates_16_9_image_and_tolerates_missing_assets():
+    gw = _FakeGateway()
+    item = ImageService(gw).generate({
+        "tipo": "slide", "titolo": "Bitcoin è denaro", "sottotitolo": "Puntata 42",
+        "sfondo": 404, "persone": [21, 404], "formato": "image/jpeg",
+    })
+    assert item["tipo"] == "slide" and gw.uploaded[0]["media_type"] == "image/jpeg"
+    assert any("sfondo" in w for w in item["warnings"])
+    assert any("persone" in w for w in item["warnings"])
+    img = Image.open(io.BytesIO(gw.uploaded[0]["data"]))
+    assert img.size == (1920, 1080) and img.format == "JPEG"
+
+
+def test_slide_title_is_the_media_title():
+    gw = _FakeGateway()
+    ImageService(gw).generate({"tipo": "slide", "titolo": "  Bitcoin   è  denaro "})
+    assert gw.uploaded[0]["title"] == "Bitcoin è denaro"
+
+
+# ── Capacita' del motore usate dai preset ──────────────────────────────────────
+
+def test_compositor_honours_a_custom_canvas():
+    raw, _ = layer_compositor.render_composita(
+        [{"type": "background", "fallback_color": "#00ff00", "image_bytes": None}],
+        canvas=(1080, 1080),
+    )
+    img = Image.open(io.BytesIO(raw))
+    assert img.size == (1080, 1080) and img.convert("RGB").getpixel((5, 5)) == (0, 255, 0)
+
+
+def test_compositor_circle_mask_clears_the_corners():
+    raw, _ = layer_compositor.render_composita([
+        {"type": "background", "fallback_color": "#000000", "image_bytes": None},
+        {"type": "image", "image_bytes": _png_bytes((255, 255, 255, 255), (200, 200)),
+         "x": "0px", "y": "0px", "size": {"width": "200px"}, "mask": "circle"},
+    ], canvas=(200, 200))
+    img = Image.open(io.BytesIO(raw)).convert("RGB")
+    assert img.getpixel((100, 100)) == (255, 255, 255)   # centro: il logo
+    assert img.getpixel((2, 2)) == (0, 0, 0)             # angolo: ritagliato via
+
+
+def test_compositor_overlay_darkens_the_background():
+    def _corner(overlay):
+        raw, _ = layer_compositor.render_composita(
+            [{"type": "background", "image_bytes": _png_bytes((255, 255, 255, 255)),
+              "fit": "cover", **({"overlay": overlay} if overlay else {})}],
+            canvas=(64, 64),
+        )
+        return Image.open(io.BytesIO(raw)).convert("RGB").getpixel((32, 32))
+
+    assert _corner(None) == (255, 255, 255)
+    assert _corner({"color": "#000000", "opacity": 0.5})[0] < 140
+
+
+@pytest.mark.parametrize("natural", [(200, 200), (900, 300), (300, 900)])
+def test_circle_mask_diameter_does_not_depend_on_the_source_aspect(natural):
+    """Il cerchio ha il diametro **richiesto**: un logo largo e uno alto danno lo stesso tondo."""
+    raw, _ = layer_compositor.render_composita([
+        {"type": "background", "fallback_color": "#000000", "image_bytes": None},
+        {"type": "image", "image_bytes": _png_bytes((255, 255, 255, 255), natural),
+         "x": "0px", "y": "0px", "size": {"width": "120px"}, "mask": "circle"},
+    ], canvas=(240, 240))
+    img = Image.open(io.BytesIO(raw)).convert("RGB")
+    assert img.getpixel((60, 60)) == (255, 255, 255)     # centro del cerchio
+    assert img.getpixel((118, 5)) == (0, 0, 0)           # angolo del riquadro 120x120
+    assert img.getpixel((60, 130)) == (0, 0, 0)          # subito sotto il diametro

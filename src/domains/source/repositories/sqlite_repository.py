@@ -46,16 +46,20 @@ class SqliteSourceMediaRepository:
 
     def find(
         self,
-        media_type: str,
+        media_type: Optional[str],
         title: Optional[str],
         page: int,
         page_size: int,
     ) -> tuple[list[dict], int]:
-        where = "WHERE media_type = ?"
-        params: list = [media_type]
+        clauses: list[str] = []
+        params: list = []
+        if media_type is not None:
+            clauses.append("media_type = ?")
+            params.append(media_type)
         if title is not None:
-            where += " AND title = ?"
+            clauses.append("title = ?")
             params.append(title)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
         with self._connect() as conn:
             total = conn.execute(

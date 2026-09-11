@@ -10,6 +10,7 @@ from .media_controller import (
     get_media_content,
     list_media,
     upload_media,
+    upload_media_from_url,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "get_media",
     "get_media_content",
     "upload_media",
+    "upload_media_from_url",
 ]

@@ -24,10 +24,18 @@ Endpoint (specchio di `source`, sul path pubblico):
 
 | Endpoint | Cosa fa |
 |----------|---------|
-| `GET /v0/media?type=&title=&page=&page_size=` | lista (delega a source); URL ri-mappati su `/v0/media` |
+| `GET /v0/media?type=&title=&page=&page_size=` | lista (delega a source); URL ri-mappati su `/v0/media`. **`type` e `title` opzionali**: senza `type` elenca tutto l'archivio |
 | `GET /v0/media/{id}` | metadati del singolo media |
 | `GET /v0/media/{id}/content[?download=1]` | byte: inline (play) o allegato (download) |
 | `POST /v0/media` | upload (multipart, delegato a source) |
+| `POST /v0/media/from-url` | crea un media scaricando un URL lato server (difese SSRF; delega a source) |
+
+> **`media_type` — MIME e normalizzazione.** L'enum di **upload** accetta `audio/m4a`, `audio/mpeg`,
+> `audio/mp3` (**alias legacy** di `audio/mpeg`, normalizzato: archiviato e filtrabile come
+> `audio/mpeg`), `audio/wav`, `video/mp4`, `image/png|jpeg|webp`. Filtrare per `audio/mp3` o
+> `audio/mpeg` restituisce lo stesso insieme. `GET /v0/media` **senza `type`** elenca ogni tipo.
+> Il **filtro** `GET /v0/media?type=` accetta anche `font/ttf`/`font/otf` (i font sono **elencabili**),
+> ma l'**upload pubblico di font non esiste**: i font si caricano solo dalla rete interna (`source`).
 
 **Download/streaming — il nodo `media → source`** (`MediaService` + `SourceGateway`):
 - `media` chiama `source` con `follow_redirects=False`;
@@ -40,6 +48,92 @@ Il gateway usa **HTTP diretto** (httpx) sulla rete docker, non l'SDK generato (i
 
 > Evoluzione: `media` potrà arricchire i metadati con la propria business logic (es. pubblicazione)
 > oltre ai dati grezzi di `source`.
+
+### URL di lettura firmati (`signed_url`) — il caso `<img src>`
+
+**Il problema.** `GET /v0/media/{id}/content` richiede `X-API-Key` in un **header**, ma il browser
+non allega header alle richieste di **sotto-risorsa**: `<img src="…/content">`, `<audio src>` e
+`<video src>` ricevono `401`. Il front-end può aggirarlo con `fetch` + `URL.createObjectURL`, e
+funziona, ma tiene il file **in memoria** e rinuncia alla **cache HTTP** e allo streaming con
+`Range` (niente seek su audio/video lunghi).
+
+**La soluzione.** Accanto a `content_url` (autenticato) le risposte portano `signed_url`: lo stesso
+URL con un token in query string, che `GET /media/{id}/content` accetta **in alternativa** alla
+chiave (`security: [ApiKeyAuth] OR [SignedUrlAuth]` nel contratto).
+
+| Campo | Cosa contiene |
+|---|---|
+| `content_url` | URL dei byte, richiede `X-API-Key`. Per i client server-side. |
+| `signed_url` | Stesso URL + `?token=…`: **niente header**. Per i tag del browser. |
+| `signed_url_expires_at_s` | Scadenza del token (epoch). Passata: `401`, si rilegge il media. |
+
+Il token è un **HMAC-SHA256 su `(id, scadenza)`** e vale:
+
+- **solo per quel media** — l'id entra nella *firma*, quindi spostare il token su un altro id la
+  invalida. Non è un controllo che si può dimenticare in un `if`: è il calcolo stesso;
+- **solo in lettura** — nessun'altra rotta dichiara `SignedUrlAuth`;
+- **solo fino alla scadenza** — `MEDIA_URL_TTL_S`, default **900 s**, limitata a [30 s, 24 h].
+
+`&download=1` si aggiunge all'URL firmato **senza rifirmarlo** (la firma copre id e scadenza, non
+gli altri parametri). `signed_url` compare anche nella risposta di `POST /v0/content/image`
+(l'immagine appena generata si mostra subito) e nei media prodotti dai job `audio`.
+
+> **I byte non diventano pubblici per default.** Senza `MEDIA_URL_SIGNING_KEY` la firma è **spenta**:
+> i campi non compaiono e **nessun** token è accettato (*fail-closed*). Per ottenere un `signed_url`
+> serve comunque la chiave API: l'URL firmato è un permesso ristretto che la chiave *emette*, non
+> un'alternativa ad essa.
+
+**Limite noto**: un token non è revocabile singolarmente (è stateless). Le leve sono la scadenza
+breve e la **rotazione di `MEDIA_URL_SIGNING_KEY`**, che invalida in blocco tutti i token emessi.
+Chi ha in mano l'URL può rileggere quel media fino alla scadenza: è la stessa proprietà degli URL
+pre-firmati di S3/MinIO, e va tenuta presente prima di incollare un `signed_url` in un canale
+condiviso. Conseguenza operativa: il token finisce negli **access log** di nginx (che registrano la
+query string) — se i log vengono conservati o spediti altrove, contengono permessi di lettura validi
+fino alla loro scadenza.
+
+**Configurazione** (dominio `media`, più `content` e `audio` che emettono URL firmati):
+
+| Variabile | Dove | Effetto |
+|---|---|---|
+| `MEDIA_URL_SIGNING_KEY` | **secret** dell'Environment | Assente → firma spenta. Ruotarla invalida tutti i token. |
+| `MEDIA_URL_TTL_S` | `vars` dell'Environment | Durata del token in secondi (default 900). |
+
+```js
+// client: leggi il media una volta, poi usa signed_url nel DOM
+const m = await (await fetch(`/v0/media/${id}`, {headers: {'X-API-Key': key}})).json();
+img.src = m.signed_url;                       // niente fetch dei byte, niente object URL
+// prima di signed_url_expires_at_s, rileggi il media per un URL fresco
+```
+
+### `POST /v0/media/from-url`
+Crea un media **scaricandolo lato server** da un URL, così il client (es. un browser che tiene i file
+su Blossom, archivio a contenuto indirizzato per hash) evita il doppio transito
+download + re-upload di file grandi. Protetto (`X-API-Key`). Body JSON:
+`{ url, title, media_type?, duration_s? }`. Il server scarica i byte e **delega la creazione a
+source** (`POST /source/media`, stesso storage e stessa dedup dell'upload multipart).
+
+- **`media_type`**: opzionale. Se assente è **dedotto dal `Content-Type`** della risposta. Se il tipo
+  (fornito o rilevato) non è fra quelli accettati → **`400`** che indica il tipo rilevato (non un `500`).
+- **Difese SSRF** (l'URL è esterno, `src/domains/media/fetcher.py`): solo **http/https**; l'host non
+  deve risolvere su indirizzi **privati/loopback/link-local/riservati** (blocca la rete interna e il
+  metadata endpoint `169.254.169.254`); **limite di dimensione** (`413`), **timeout** e **max N
+  redirect rivalidati a ogni hop** (`502`). Configurabili: `MEDIA_FETCH_MAX_BYTES`,
+  `MEDIA_FETCH_TIMEOUT`, `MEDIA_FETCH_MAX_REDIRECTS`.
+- **Filename**: dedotto dal path dell'URL (per Blossom = l'hash) → stesso contenuto ⇒ stesso
+  `object_key` ⇒ **`409`** come `POST /v0/media`, così il client riusa il record invece di trattarlo
+  come errore.
+
+| Esito | Codice |
+|-------|--------|
+| Creato | `201` → `MediaItem` (URL su `/v0/media`) |
+| URL non consentito (schema/host non pubblico) o `media_type` non accettato | `400` |
+| Contenuto già presente | `409` |
+| Oltre il limite di dimensione | `413` |
+| Download fallito (irraggiungibile, errore remoto, troppi redirect) | `502` |
+
+> Nota SSRF: il controllo DNS e la connessione sono in momenti distinti (finestra di DNS-rebinding).
+> La rivalidazione a ogni redirect e un solo host per richiesta riducono il rischio; il pinning
+> sull'IP validato è l'irrigidimento successivo se servisse.
 
 ---
 
@@ -57,8 +151,8 @@ Query parameter:
 
 | Param | Obblig. | Tipo | Default | Note |
 |-------|---------|------|---------|------|
-| `type` | sì | enum | — | `audio/m4a` \| `audio/mp3` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` \| `font/ttf` \| `font/otf` |
-| `title` | no | string | — | match **esatto**; omesso → tutti i record del tipo |
+| `type` | **no** | enum | — | `audio/m4a` \| `audio/mpeg` \| `audio/mp3` (alias→mpeg) \| `audio/wav` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` \| `font/ttf` \| `font/otf`. **Omesso → tutti i tipi** |
+| `title` | no | string | — | match **esatto**; combinabile con `type` |
 | `page` | no | int ≥1 | 1 | pagina (1-based) |
 | `page_size` | no | int 1..100 | 20 | risultati per pagina |
 
@@ -94,7 +188,7 @@ Request `multipart/form-data`:
 |-------|---------|------|------|
 | `file` | sì | binary | contenuto del media (il nome file diventa parte dell'`object_key`) |
 | `title` | sì | string | titolo |
-| `media_type` | sì | enum | `audio/m4a` \| `audio/mp3` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` \| `font/ttf` \| `font/otf` |
+| `media_type` | sì | enum | `audio/m4a` \| `audio/mpeg` \| `audio/mp3` (alias→mpeg) \| `audio/wav` \| `video/mp4` \| `image/png` \| `image/jpeg` \| `image/webp` \| `font/ttf` \| `font/otf`. `audio/mp3` viene **normalizzato** a `audio/mpeg` (storage + `object_key`) |
 | `duration_s` | no | integer | durata in secondi |
 
 > Gli `image/*` sono stati aggiunti per gli **asset** (logo, avatar) usati dal dominio
@@ -298,14 +392,30 @@ campo `tipo` (discriminatore) seleziona il generatore e **quali campi** sono amm
 |--------|-------|--------------|
 | `copertina` | ✅ attivo | template fisso "21milioni di chiacchiere": `titolo`*, `testo_centrale`*, `logo_host`*, `ospiti[≤5]`, `colore_sfondo`, `tipo_sfondo` (`unicolor`\|`sfumato-up`\|`sfumato-down`), `colore_sfumato`, `formato`, `font_titolo`, `font_testo` |
 | `composita` | ✅ attivo | **motore a layer** (1920×1080): `layers[]`* (vedi sotto), `formato` |
-| `social` | 🚧 draft → `501` | `logo_top`*, `logo_bottom`*, `testo`, `testo_bottom`, `colore_sfondo`, `colore_testo`, `formato` |
+| `social` | ✅ attivo | **preset** quadrato (1080×1080): `logo_top`*, `logo_bottom`, `testo`, `testo_bottom`, `colore_sfondo`, `colore_testo`, `font`, `formato` |
+| `slide` | ✅ attivo | **preset** 16:9 da copertina video (1920×1080): `titolo`*, `sottotitolo`, `sfondo`, `fit`, `persone[≤3]`, `logo`, `colore_sfondo`, `colore_velo`, `velo`, `colore_testo`, `dimensione_titolo`, `allineamento`, `font_titolo`, `font_testo`, `formato` |
 
 (*) obbligatorio. `formato` ∈ `image/png` (default) \| `image/jpeg` \| `image/webp`.
 
-**Asset (`MediaRef`)**: `logo_host`, `ospiti`, `logo_top`/`logo_bottom`, `font_titolo`/`font_testo`
-accettano un **id media** (intero) **oppure** un **nome file** (stringa) — risolti via `source` (id
-prima, poi filename). Un ospite non trovato → **avatar placeholder** (non è un errore); il **logo**
-mancante → `400`.
+**Asset (`MediaRef`)**: `logo_host`, `ospiti`, `logo_top`/`logo_bottom`, `font_titolo`/`font_testo`,
+`layers[].media`, `layers[].font` accettano un **id media** (intero) **oppure** il **`filename`**
+(stringa). Un ospite non trovato → **avatar placeholder** (non è un errore); il **logo** mancante → `400`.
+
+> ⚠️ **`filename`, non `title`.** `MediaItem` ha due campi testuali: `title` (quello che *invii* a
+> `POST /v0/media`) e `filename` (**generato dal servizio**). La risoluzione per stringa usa **solo il
+> `filename`**, che va **riletto dalla risposta** di `POST /v0/media`. Passare il `title` produce `400`.
+> Il match sul filename è tollerante (case/estensione/separatore).
+>
+> **Perché non risolviamo per `title`.** I title non sono univoci: risolverli imporrebbe o una scelta
+> silenziosa (il footgun) o un `409` su ogni ambiguità. Teniamo un'unica chiave stabile (`filename`) e
+> rendiamo l'errore *diagnostico*: il `400` indica **`field`** (es. `logo_host`, `layers[2].media`),
+> **`value`** ricevuto, **`searched_by`** (`filename`|`id`) e — se il valore coincide col `title` di un
+> media esistente — **suggerisce il `filename`** giusto. Corpo (schema `Error` esteso):
+>
+> ```json
+> { "detail": "asset non trovato per il campo 'logo_host': 'Logo Bianco' (ricerca per filename). Esiste però un media con quel *title* (id 60 -> filename 'logo-bianco.png'): i riferimenti usano il filename, non il title.",
+>   "field": "logo_host", "value": "Logo Bianco", "searched_by": "filename" }
+> ```
 
 **Font (`font_titolo`/`font_testo`)**: catena di fallback per ogni ruolo — font personalizzato (byte
 da `source`) → **Montserrat bundle** → **default Pillow**. Un font **richiesto ma non trovato** (o
@@ -315,8 +425,9 @@ risposta resta `201`). Asimmetria voluta: **logo mancante = `400`** (hard), **fo
 
 Risposte: `201` → `GeneratedImage` `{ id, tipo, media_type, size_bytes, created_at_s, content_url,
 download_url, warnings[] }` (gli URL puntano a `/v0/media/{id}/content`; `warnings` elenca i fallback
-non bloccanti); `400` parametri invalidi o logo non trovato; `501` `tipo` non ancora implementato (es.
-`social`); `401` senza chiave.
+non bloccanti); `400` parametri invalidi o asset **obbligatorio** non trovato (corpo **diagnostico**:
+`field`/`value`/`searched_by`, vedi sopra); `501` `tipo` senza generatore associato (contratto
+riservato ai tipi futuri: oggi nessuno lo restituisce); `401` senza chiave.
 
 **Esempio (Bruno / curl).** Prima carica gli asset come media `image/*` per ottenerne gli id:
 
@@ -358,10 +469,10 @@ nome file** (`MediaRef`).
 
 | `type` | A cosa serve | Campi principali |
 |--------|--------------|------------------|
-| `background` | immagine/colore a piena canvas | `media`, `fit` (`cover`\|`contain`\|`stretch`), `fallback_color` |
-| `person` | persona PNG **scontornata**, N affiancabili | `media`*, `x`, `y`, `size`, `opacity`, `required` |
+| `background` | immagine/colore a piena canvas | `media`, `fit` (`cover`\|`contain`\|`stretch`), `fallback_color`, `overlay` |
+| `person` | persona PNG **scontornata**, N affiancabili | `media`*, `x`, `y`, `size`, `opacity`, `mask`, `required` |
 | `text` | testo (titolo/dettagli), `\n` multi-riga | `content`*, `font`, `font_size`, `color`, `align`, `x`, `y`, `max_width`, `stroke`, `box` |
-| `image` | logo/inserto/grafica sovrapposta | `media`*, `x`, `y`, `size`, `opacity`, `required` |
+| `image` | logo/inserto/grafica sovrapposta | `media`*, `x`, `y`, `size`, `opacity`, `mask`, `required` |
 
 **Posizionamento (`x`/`y`)** — tre forme, semantica unica:
 
@@ -374,10 +485,21 @@ nome file** (`MediaRef`).
 `size` (`{width, height}`) accetta `%` o px; una sola → aspetto preservato; nessuna → naturale
 (clampata alla canvas, mai ingrandita).
 
+**Ritaglio (`mask: circle`)** su `person`/`image`: il layer diventa un **cerchio** del diametro
+richiesto in `size` (se sono date entrambe le dimensioni vince la minore). L'immagine viene
+riempita a `cover` e ritagliata al centro, quindi **il diametro non dipende dalle proporzioni della
+sorgente**: un logo 3:1 e uno quadrato producono lo stesso tondo, senza deformarsi.
+
+**Velo sullo sfondo (`overlay`)** su `background`: `{color, opacity}` steso sopra l'immagine (sotto
+agli altri layer). È il modo standard per rendere leggibile un titolo su una foto complessa —
+`{ "color": "#000000", "opacity": 0.45 }` è quello che usa il preset `slide`.
+
 **Stile del testo** (è ciò che rende le copertine "da YouTube"):
 - `stroke`: `{width, color}` — bordo del testo (nativo Pillow).
 - `box`: `{color, radius, padding, opacity}` — riquadro arrotondato colorato dietro al testo
   (i tipici box gialli/scuri con la scritta in grassetto).
+- `shadow`: `{color, offset{x,y}, blur, opacity}` — ombra o **glow/neon**: `offset {0,0}` + `blur`
+  alto = alone luminoso (es. "LIVE"); offset valorizzato + `blur` basso = ombra portata.
 - `max_width`: se valorizzato, va a capo automatico sulle parole.
 
 **Asset mancante**: di default il layer viene **saltato con un `warning`** (la composizione non
@@ -409,6 +531,75 @@ fallisce); con `required: true` invece → `400`. Lo sfondo mancante cade su `fa
 }
 ```
 
+### `tipo: social` e `tipo: slide` — preset del motore a layer
+
+Un **preset** non è un secondo motore: è una funzione pura che espande i propri campi nei **layer**
+di `composita` e passa dallo **stesso renderer**. Conseguenza pratica: stessa risoluzione degli
+asset, stessi `warnings`, stessi `400` diagnosticabili, un solo percorso di codice da mantenere.
+Serve un layout diverso da quello del preset? Si usa `composita` e si scrivono i layer a mano.
+
+> I `400` dei preset citano il **campo della richiesta** (`logo_top`, `sfondo`, `persone`), non
+> `layers[2].media`: chi chiama vede il proprio contratto, non l'espansione interna.
+
+**`social` — quadrato 1080×1080.** Dall'alto: sfondo a tinta unita (`colore_sfondo`) → `logo_top`
+(vincolato in **altezza**, 170 px, a 70 px dal bordo: la fascia che occupa non dipende dalle sue
+proporzioni, così il testo non gli finisce mai sopra) → `testo` reso in **MAIUSCOLO** e centrato
+verticalmente → `logo_bottom` ritagliato **a cerchio** di 260 px → `testo_bottom` in fondo.
+`logo_top` è obbligatorio (non risolvibile → `400`); `logo_bottom` degrada a warning.
+
+```jsonc
+{ "tipo": "social", "logo_top": "logo-radio.png", "logo_bottom": 42,
+  "testo": "è lieto di ospitare", "testo_bottom": "Alice Rossi",
+  "colore_sfondo": "#ff751f", "colore_testo": "#ffffff" }
+```
+
+**`slide` — 16:9 1920×1080, copertina di un video** (il caso d'uso finora scritto a mano con
+`composita`). Dallo sfondo in su: `sfondo` a piena canvas (`fit`, fallback `colore_sfondo`) + un
+**velo** (`colore_velo` + `velo`, default nero 0.45) che rende leggibile il testo → fino a 3
+`persone` scontornate allineate in basso → `logo` in alto a sinistra (260 px) → `titolo` con glow →
+`sottotitolo`.
+
+`allineamento` decide l'impaginazione:
+
+| valore | titolo/sottotitolo | ospiti |
+|---|---|---|
+| `left` (default) | a sinistra, 80 px dal bordo, larghezza max 920 px | fascia di destra |
+| `center` | centrati | distribuiti su tutta la larghezza |
+
+Due accorgimenti che rendono il preset robusto: l'**altezza degli ospiti si adatta al numero**
+(1 → 70% della canvas, 2 → 62%, 3 → 55%) e titolo/sottotitolo sono posizionati **nello spazio
+libero** (`y: "55%"`/`"80%"`), quindi un titolo che va a capo su più righe sale da solo senza mai
+sovrapporsi al sottotitolo.
+
+```jsonc
+{ "tipo": "slide", "titolo": "Bitcoin è denaro,\nnon un investimento",
+  "sottotitolo": "Puntata 42 — con Alice e Bob",
+  "sfondo": "studio.jpg", "logo": "logo-radio.png", "persone": [21, 22],
+  "velo": 0.5, "allineamento": "left", "formato": "image/jpeg" }
+```
+
+**Aggiungere un preset**: un builder in `services/presets.py` (richiesta → `(canvas, layers)`, senza
+I/O) + il suo schema `<Nome>Request` in `openapi/content/api.yaml` (voce nel `discriminator` e nella
+`mapping`, e il nuovo valore in `GeneratedImage.tipo`). Il service e il renderer non cambiano.
+
+### `GET /v0/content/fonts` — catalogo font
+
+Elenco dei font caricati su `source` (`font/ttf`/`font/otf`), referenziabili nei layer `text`
+(campo `font`) o in `copertina` per **id** o **nome** (risoluzione tollerante). Protetto
+(`X-API-Key`). `200` → array di `FontInfo` `{ id, name, filename, media_type, size_bytes?, created_at_s }`.
+
+**Kit font consigliato** (free, Google Fonts, incorporabili) per riprodurre lo stile dei canali:
+
+| Nome canonico | Uso | Famiglia |
+|---|---|---|
+| `montserrat-black` / `-extrabold` / `-bold` / `-regular` | titoli e testi | Montserrat |
+| `bebas-neue` | display condensato ("LIVE", titoli punchy) | Bebas Neue |
+| `great-vibes` | script elegante (firme "con … ") | Great Vibes |
+| `pacifico` | brush/firma | Pacifico |
+
+Si caricano una volta sola **dalla rete interna** con `POST /v0/source/media/from-url` (i Google
+Fonts hanno URL `.ttf` diretti), scegliendo il `filename` canonico; poi si referenziano per nome.
+
 ### Architettura
 
 ```
@@ -418,8 +609,10 @@ factory.py  ── build_image_service() ── SOURCE_INTERNAL_URL, API_KEY
         │
 services/image_service.py            orchestrazione: risolve MediaRef → byte, dispatch su `tipo`,
         │                            salva su source, ri-mappa URL /v0/source → /v0/media
+        │                            (`composita` e i preset condividono `_generate_layered`)
         ├── services/copertina_renderer.py   Pillow puro (copertina 2560×1440), niente rete/framework
-        ├── services/layer_compositor.py     Pillow puro (composita 1920×1080), compositing a layer
+        ├── services/presets.py              social/slide → (canvas, layers): funzione pura, niente I/O
+        ├── services/layer_compositor.py     Pillow puro, canvas parametrica, compositing a layer
         └── gateway.py               SourceGateway: resolve_filename, get_bytes (segue il 302), upload_image
 ```
 
@@ -435,12 +628,86 @@ mancano, il renderer **non fallisce**: degrada al font di default di Pillow e lo
 | Aspetto | Oggi | Futuro |
 |---------|------|--------|
 | `POST /v0/content/image` `tipo: copertina` | ✅ Pillow, asset per id/nome file, output png/jpeg/webp | — |
-| `tipo: composita` (motore a layer 1920×1080) | ✅ `layer_compositor.py`: `background`/`person`/`text`/`image`, posizione keyword/%/px, `size`, `stroke`/`box`, N layer | template/preset salvabili |
-| `tipo: social` | 🚧 schema draft → `501` | porting di `social_processor.py` (1080×1080) |
+| `tipo: composita` (motore a layer, canvas parametrica) | ✅ `layer_compositor.py`: `background`/`person`/`text`/`image`, posizione keyword/%/px, `size`, `stroke`/`box`/`shadow`, `mask: circle`, `overlay`, N layer | template/preset salvabili |
+| `tipo: social` (1080×1080) | ✅ **preset** sul motore a layer (`presets.py`), non un secondo renderer | — |
+| `tipo: slide` (16:9 copertina video) | ✅ **preset**: sfondo+velo, ≤3 ospiti, titolo/sottotitolo, logo, `allineamento` | preset salvabili lato utente |
 | Salvataggio risultato | ✅ come media `image/*` via `source`, recupero via `/v0/media` | — |
 | Font personalizzati (`font_titolo`/`font_testo`) | ✅ caricati su `source` (`font/ttf`/`otf`), referenziati per id/nome file | — |
 | Font mancante | ✅ fallback (custom → Montserrat → Pillow) + `warnings[]` nella risposta | — |
 | Font Montserrat bundle | ⚠️ fallback al default se assenti | TTF montati in `FONTS_DIR` |
+
+---
+
+## Dominio `audio` — elaborazione audio (BFF pubblico)
+
+Porta le capacita' del vecchio servizio `ffmpeg` (microservices-media) **senza i suoi vincoli**.
+Contratto: `openapi/audio/api.yaml`. Pubblico → CORS/HTTPS come `media`/`content`.
+
+**Input = riferimento** (`MediaRef`: id o filename) a un media in archivio, risolto via `source`,
+**non un upload dentro l'operazione**: la stessa sorgente si riusa fra piu' tentativi. **Ogni
+operazione produce un NUOVO media e non distrugge l'ingresso.** Ordine libero e formati
+indifferenti (ogni operazione risolve il riferimento allo stesso modo; niente cartelle-per-op,
+niente "solo mp3": **anche i wav** passano da `silence`).
+
+### Operazioni (modello a job)
+Le lavorazioni sono lunghe: `POST` risponde **`202`** con `{ job_id, status, op, poll_url }`; si
+segue con `GET /v0/audio/job/{id}` (`queued` → `running` → `succeeded`|`failed`). I job sono
+**persistenti** (SQLite): sopravvivono al riavvio (i `running` interrotti tornano `queued`).
+
+| Endpoint | Cosa fa | Output |
+|----------|---------|--------|
+| `POST /v0/audio/normalize` | livella le voci (EBU R128) | nuovo media audio (default mp3) |
+| `POST /v0/audio/silence` | accorcia i silenzi (incl. iniziale/finale) | nuovo media (default wav) |
+| `POST /v0/audio/convert` | cambia contenitore/codec | nuovo media nel `format` |
+| `POST /v0/audio/analyze` | **misura** e non modifica nulla | `result.analysis` (riusabile) |
+| `POST /v0/audio/split` | divide in segmenti | N nuovi media |
+| `POST /v0/audio/concat` | sigla + corpo + coda | un nuovo media |
+| `GET /v0/audio/job/{id}` | stato del job | `result.media[]` o `result.analysis` |
+
+A `succeeded`, `result.media[]` elenca `{ id, media_type, content_url, download_url }` (URL su
+`/v0/media`); per `analyze`, `result.analysis` (associata al media, non ricalcolata).
+
+### Scelte DSP (misurate)
+- **normalize**: `dynaudnorm=f=250:g=11:m=<maxgain>` + `loudnorm`. **`maxgain` e' il tetto di
+  correzione** (dB = 20·log10(maxgain)); il default 10 di ffmpeg (+20 dB) lascia i parlanti
+  disallineati — qui **default 80**. Misurato su due parlanti a 18 LU di scarto: catena vecchia
+  ~non allinea; con `maxgain` alto lo scarto scende **< 1 LU** e il file va a **-16 LUFS**.
+  `two_pass` (misura+applica) e' piu' preciso ma raddoppia il tempo; una passata basta.
+- **silence**: `silenceremove` con `start_periods` (**taglia il silenzio iniziale lungo**, nuovo
+  requisito) + `stop_periods=-1`, lasciando `keep_silence_s` (pausa udibile, non stacchi netti).
+  Soglia con **unita' dB** (`-40dB`, non ampiezza lineare).
+- **Intermedi senza perdita**: `silence`/`split` producono wav di default; la compressione avviene
+  dove il chiamante sceglie il `format` (`normalize`/`convert`/`concat`). Cosi' una catena di
+  operazioni non ricomprime a ogni passaggio.
+- **Raccomandazione di qualita'** (nell'endpoint, non imposta dall'infrastruttura): **prima
+  `silence`, poi `normalize`** — normalizzare prima alza il rumore di fondo sopra la soglia di
+  silenzio e il taglio non lo riconosce piu'.
+- **Limite dichiarato**: due voci sovrapposte nello stesso canale non si separano; con tracce
+  separate per parlante, normalizzarle prima del mix e' meglio.
+
+### Contratto errori & formati
+- Formati input accettati: `audio/m4a`, `audio/mpeg` (`audio/mp3` alias), `audio/wav`. Output:
+  `audio/mpeg`|`audio/m4a`|`audio/wav`. Dichiarati nell'OAS **per operazione**.
+- Errori **diagnostici** (`400`): riferimento non risolto → `field`/`value`/`searched_by`; formato
+  non supportato → il tipo rilevato + i formati accettati. (Il client non deve piu' "sapere" da se'
+  che i wav non si possono tagliare: e' falso, e comunque l'errore lo direbbe.)
+
+### Naming human-readable
+Gli id sono usabili **a mano**: job `normalize-20260910-153000-a3f9`, media prodotti
+`<stem-sorgente>-<op>-<token>.<ext>` (es. `puntata-pilota-normalize-a3f9.mp3`). Niente uuid opachi.
+
+### Architettura
+```
+controllers/audio_controller.py   thin: valida/accoda -> (202 job | 400 diagnostico)
+factory.py  build_service()/build_worker()/maybe_start_background_worker()
+services/audio_service.py          risolve MediaRef, valida formati, crea job (persistente)
+worker.py                          rivendica un job, scarica input(source), ffmpeg, carica output
+repositories/job_store.py          SQLite: job + cache analisi; claim atomico; recovery al riavvio
+processors/ffmpeg_processor.py     command-builder puri (misurati) + runner + parsing analyze
+gateway.py                         verso source: resolve/get_bytes/upload (byte reali, 302-follow)
+```
+Il worker gira in background nel container (`AUDIO_START_WORKER=1`); `AUDIO_DB_PATH` e' su volume
+persistente. ffmpeg e' installato nell'immagine **solo** per `DOMAIN=audio` (Dockerfile parametrico).
 
 ---
 
