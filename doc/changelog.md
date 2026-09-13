@@ -396,6 +396,32 @@ kind `10154` (scheda) e `54` (episodi) di una chiave. `GET /v0/feed/{npub}.xml`,
 - **`src/net_guard.py`**: la guardia SSRF passa da `media` a modulo condiviso — due copie
   sarebbero divergenti, e una guardia SSRF divergente e' una guardia rotta.
 
+## 25. Schema esterno propagato dal proxy (self-link del feed in https) (2026-09-13)
+
+Il feed usciva con `<atom:link rel="self" href="http://...">` mentre veniva scaricato — e
+sottoposto a Podcast Index — in **https**.
+
+Causa: due reverse-proxy in fila. L'nginx di sistema termina il TLS e manda
+`X-Forwarded-Proto: https`, ma il proxy del media-manager lo **sovrascriveva** con il proprio
+`$scheme`, che verso i container e' `http`. L'app non vedeva mai https e componeva il proprio URL
+dall'ultimo hop.
+
+- `deploy/proxy/gen-nginx-conf.sh`: `map $http_x_forwarded_proto $proto_esterno` — si **propaga**
+  il valore ricevuto e si usa `$scheme` solo quando non c'e' nessuno davanti. Vale per tutti i
+  domini, non solo feed: e' l'header che serve a chiunque componga URL assoluti.
+- `src/external_url.py` (condiviso): schema e host **esterni** da `X-Forwarded-Proto`/
+  `X-Forwarded-Host`, mai da `request.scheme`. Gestisce anche il caso `https, http` che si forma
+  con piu' proxy in fila (vale il primo valore, l'hop piu' vicino al client).
+- Il feed compone il proprio URL **una volta sola**: da quella stringa derivano sia il self-link
+  sia il `podcast:guid` (UUIDv5 dello stesso URL senza schema), cosi' non possono divergere.
+- Test: con `X-Forwarded-Proto: https` il self-link e' https, senza header e' lo schema della
+  richiesta, e il `guid` e' identico nei due casi. Piu' un controllo che ne' il generatore ne' la
+  conf generata contengano ancora `X-Forwarded-Proto $scheme`.
+- **Stesso buco di detection della #20, chiuso**: una modifica a `deploy/proxy/` o a un modulo
+  condiviso in `src/` (cors, security, signed_url, net_guard, rate_limit, external_url) non
+  corrispondeva a nessun pattern e **non faceva scattare alcun deploy**. Il criterio ora e': se
+  toccandolo puo' cambiare il comportamento di piu' di un dominio, e' un file condiviso.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

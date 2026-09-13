@@ -17,6 +17,7 @@ from src.domains.feed.errors import InvalidKey, NoPodcastCard
 from src.domains.feed.factory import build_feed_service
 from src.domains.feed.nostr import nip19
 from src.domains.feed.services import discovery, feed_service
+from src.external_url import external_url
 from src.rate_limit import FixedWindowLimiter, client_ip
 
 _service = build_feed_service()
@@ -45,15 +46,17 @@ def _matches(header: str, etag: str) -> bool:
 
 
 def _feed_url(npub: str) -> str:
-    """URL canonico del feed: **sempre** in forma npub, anche se e' stato chiesto in esadecimale.
+    """URL canonico del feed: **una** stringa, da cui derivano sia `atom:link rel="self"` sia
+    `podcast:guid`. Non e' un dettaglio: il guid e' l'UUIDv5 di questo URL senza schema, quindi
+    se i due si calcolassero per vie diverse potrebbero divergere senza che nessuno se ne accorga.
 
-    Cosi' `podcast:guid` e `atom:link rel=self` non dipendono da come il chiamante ha scritto la
-    chiave: lo stesso podcast resta lo stesso feed per Podcast Index.
+    Due proprieta', entrambe necessarie:
+      - **schema e host esterni** (`src/external_url.py`), non quelli dell'ultimo hop: dietro al
+        proxy che termina il TLS `request.scheme` e' `http` e il self-link uscirebbe in http;
+      - **sempre in forma npub**, anche se la chiave e' stata chiesta in esadecimale, cosi' lo
+        stesso podcast non risulta due feed distinti per Podcast Index.
     """
-    request = flask.request
-    scheme = request.headers.get("X-Forwarded-Proto") or request.scheme
-    host = request.headers.get("Host") or request.host
-    return f"{scheme}://{host}/v0/feed/{npub}.xml"
+    return external_url(flask.request, f"/v0/feed/{npub}.xml")
 
 
 def get_feed(npub: str, lang: str = "it", relays: str = None):

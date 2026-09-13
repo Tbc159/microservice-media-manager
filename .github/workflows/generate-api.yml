@@ -47,10 +47,13 @@ jobs:
             FILES=$(git diff --name-only "$BEFORE" "${{ github.sha }}")
           fi
 
-          # File condivisi -> impattano ogni build -> tutti i domini.
-          # Incluso QUESTO workflow: se cambia il job di deploy (env, path dati, step) la modifica
-          # deve raggiungere gli host, altrimenti resta inerte finche' non cambia altro.
-          if echo "$FILES" | grep -Eq '^(Makefile|Dockerfile|\.dockerignore|requirements.*\.txt|src/app\.py|src/client/|openapi/config/|openapi/shared/|\.github/workflows/generate-api\.yml)'; then
+          # File condivisi -> impattano ogni build -> tutti i domini. Il criterio: se toccandolo
+          # puo' cambiare il comportamento di piu' di un dominio, deve raggiungere gli host.
+          #  - src/<modulo>.py  (non solo app.py): cors, security, signed_url, net_guard,
+          #    rate_limit, external_url sono infrastruttura usata dai domini;
+          #  - deploy/proxy/    : la conf nginx serve TUTTI i domini (il passo proxy la rigenera);
+          #  - questo workflow  : un fix al job di deploy deve poter atterrare da solo.
+          if echo "$FILES" | grep -Eq '^(Makefile|Dockerfile|\.dockerignore|requirements.*\.txt|src/[^/]+\.py|src/client/|openapi/config/|openapi/shared/|deploy/proxy/|\.github/workflows/generate-api\.yml)'; then
             CHANGED="$ALL"
           else
             CAND=$(echo "$FILES" | sed -nE 's#^openapi/([^/]+)/.*#\1#p; s#^config/([^/]+)/.*#\1#p; s#^src/domains/([^/]+)/.*#\1#p; s#^docker-compose\.([^.]+)\.yml$#\1#p' | sort -u)

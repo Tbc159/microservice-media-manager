@@ -805,8 +805,17 @@ falsificabile. Gli eventi che non passano vengono scartati e contati nei log.
 schema* nel namespace di Podcasting 2.0 — è così che Podcast Index deduplica, e deve restare
 stabile.
 
-> L'URL usato per il guid e per `rel="self"` è sempre in **forma npub**, anche se la richiesta è
-> arrivata in esadecimale: altrimenti lo stesso podcast risulterebbe due feed distinti.
+> **L'URL del feed si compone una volta sola**, e da quella stringa derivano sia
+> `atom:link rel="self"` sia `podcast:guid` (che ne è l'UUIDv5 *senza schema*). Se si calcolassero
+> per vie diverse potrebbero divergere in silenzio.
+>
+> Due proprietà, entrambe necessarie:
+> - **schema e host esterni** (`src/external_url.py`), presi da `X-Forwarded-Proto`/
+>   `X-Forwarded-Host` e **mai** da `request.scheme`, che dietro al proxy che termina il TLS è
+>   `http`: è così che un self-link è uscito in http mentre l'URL sottomesso a Podcast Index era
+>   in https (vedi la nota sui proxy in fila in `deploy/README.md`);
+> - sempre in **forma npub**, anche se la richiesta è arrivata in esadecimale, altrimenti lo
+>   stesso podcast risulterebbe due feed distinti.
 
 **Item** (uno per kind 54): `title`, `description`, `content:encoded` (Markdown → HTML
 sanificato), `<guid isPermaLink="false">` = id dell'evento, `<pubDate>` RFC 822,
