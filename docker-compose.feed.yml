@@ -1,0 +1,45 @@
+# Unita' deployabile del dominio "feed" (RSS dei podcast Nostr).
+# Pubblico e SENZA autenticazione: lo scaricano le app di podcast. Le difese sono il rate
+# limit per IP e la cache; il container non riceve ne' usa la chiave API.
+# Ingresso solo via reverse-proxy; nome servizio = dominio.
+services:
+  feed:
+    build:
+      context: .
+      args:
+        DOMAIN: feed
+    image: media-manager-feed:latest
+    container_name: feed
+    environment:
+      DOMAIN: feed
+      PORT: 8080
+      # NB: nessun API_KEY / MEDIA_URL_SIGNING_KEY. Questo dominio non autentica nulla e non
+      # emette URL firmati: non deve avere segreti a disposizione.
+      # CORS: qui e' `*` sempre (marker openapi/feed/.open), indipendente da questa variabile.
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
+      # Cache persistente delle dimensioni degli enclosure (HEAD sugli URL audio).
+      FEED_DB_PATH: /data/feed.db
+      # Cache del feed generato: allineata al max-age dichiarato nella risposta.
+      FEED_CACHE_TTL_S: ${FEED_CACHE_TTL_S:-300}
+      FEED_MAX_EPISODES: ${FEED_MAX_EPISODES:-200}
+      FEED_RATE_LIMIT: ${FEED_RATE_LIMIT:-60}
+      FEED_RATE_WINDOW_S: ${FEED_RATE_WINDOW_S:-60}
+      FEED_RELAY_TIMEOUT_S: ${FEED_RELAY_TIMEOUT_S:-6}
+      FEED_INDEXER_RELAYS: ${FEED_INDEXER_RELAYS:-}
+      FEED_FALLBACK_RELAYS: ${FEED_FALLBACK_RELAYS:-}
+    env_file:
+      - config/feed/${APP_ENV:-staging}.env
+    volumes:
+      # Path dati SUL HOST, fuori dal workspace del runner: con un path relativo docker lo
+      # creerebbe come root dentro la checkout e romperebbe ogni deploy successivo
+      # (actions/checkout non riesce piu' a ripulire). Vedi deploy/README.md.
+      - ${FEED_DATA_PATH:-./data/feed}:/data
+    expose:
+      - "8080"
+    networks:
+      - mediamgr
+    restart: unless-stopped
+
+networks:
+  mediamgr:
+    external: true

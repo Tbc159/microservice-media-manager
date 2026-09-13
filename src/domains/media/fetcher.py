@@ -11,16 +11,15 @@ Difese:
   - massimo N redirect, **rivalidando ogni hop** (un 302 verso http://169.254.169.254 non deve
     passare).
 
-Nota: tra il controllo DNS e la connessione effettiva resta una finestra di DNS-rebinding
-(TOCTOU). Mitigazione completa = pinning sull'IP validato; qui accettiamo il rischio residuo,
-riducendolo con la rivalidazione a ogni hop e un solo host per richiesta.
+La guardia su schema/IP e' condivisa (`src/net_guard.py`): la usa anche `feed`. Qui sopra
+resta la parte specifica del download (dimensione, timeout, redirect rivalidati).
 """
-import ipaddress
-import socket
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 import httpx
+
+from src.net_guard import HostNotAllowed, assert_public_host, ip_disallowed  # noqa: F401
 
 MAX_BYTES = 200 * 1024 * 1024  # 200 MB
 TIMEOUT_S = 30.0
@@ -40,38 +39,16 @@ class FetchFailed(Exception):
     """Fetch fallito (timeout, errore remoto, troppi redirect) -> 502."""
 
 
-def _ip_disallowed(addr: str) -> bool:
-    ip = ipaddress.ip_address(addr)
-    # is_global esclude gia' privati/loopback/link-local/riservati; i controlli espliciti
-    # rendono l'intento chiaro e robusto tra versioni di Python.
-    return (
-        not ip.is_global
-        or ip.is_loopback
-        or ip.is_private
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
-
-
 def assert_public_url(url: str) -> None:
     """Solleva UrlNotAllowed se l'URL non e' http/https o risolve su un indirizzo non pubblico."""
     parsed = urlparse(url)
     if parsed.scheme not in _ALLOWED_SCHEMES:
         raise UrlNotAllowed(f"schema non consentito: {parsed.scheme or '(vuoto)'} (solo http/https)")
-    host = parsed.hostname
-    if not host:
-        raise UrlNotAllowed("URL senza host")
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
-        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-    except socket.gaierror as exc:
-        raise UrlNotAllowed(f"host non risolvibile: {host}") from exc
-    for info in infos:
-        addr = info[4][0]
-        if _ip_disallowed(addr):
-            raise UrlNotAllowed(f"host {host} risolve su un indirizzo non pubblico ({addr})")
+        assert_public_host(parsed.hostname, port)
+    except HostNotAllowed as exc:
+        raise UrlNotAllowed(str(exc)) from exc
 
 
 def fetch(

@@ -1,0 +1,173 @@
+openapi: 3.0.3
+info:
+  title: Feed API
+  version: 0.1.0
+  description: |
+    Dominio "feed": un **feed RSS 2.0 per ogni podcast Nostr** (NIP-F4), generato leggendo dai
+    relay i kind `10154` (scheda del podcast) e `54` (episodi) di una chiave.
+
+    ## Questo dominio e' diverso dagli altri, di proposito
+
+    | | feed | gli altri domini |
+    |---|---|---|
+    | Autenticazione | **nessuna** | `X-API-Key` |
+    | CORS | **`*`** | origini in allowlist |
+    | Cache | `Cache-Control` + `ETag` + `304` | nessuna |
+    | Limiti | **rate limit per IP** | nessuno |
+
+    - **Nessuna autenticazione**: il feed lo scaricano le app di podcast e gli aggregatori
+      (Podcast Index, Apple), che non conoscono la chiave API. Un feed e' per definizione
+      pubblico. Il resto del servizio resta autenticato: questa eccezione vale solo qui.
+    - **Cache obbligatoria**: Podcast Index rilegge circa ogni ora, Apple piu' spesso. Senza
+      cache ogni lettura aprirebbe WebSocket verso i relay. Il corpo e' deterministico (nessun
+      timestamp di generazione), quindi l'`ETag` cambia **solo** se cambiano gli eventi.
+    - **Rate limit per IP**: e' l'unica difesa possibile su un endpoint senza credenziali.
+    - **CORS `*`**: il client verifica il feed dal browser e non c'e' nulla da proteggere in un
+      documento pubblico.
+
+    ## Come si diagnostica un feed vuoto
+    Il difetto piu' probabile non e' un bug ma un **relay sbagliato**: gli eventi stanno altrove
+    e la risposta e' un canale senza episodi. Per questo ogni feed dichiara in testa i relay
+    interrogati (`<!-- relays: ... -->`) e il `404` li elenca nel corpo. Con `?relays=` se ne
+    aggiungono altri senza toccare la configurazione.
+servers:
+  - url: /v0
+    description: base path applicato da src/app.py
+
+paths:
+  /feed/health:
+    get:
+      operationId: get_health
+      tags: [feed]
+      summary: Health check del dominio feed
+      responses:
+        '200':
+          description: Servizio attivo
+          content:
+            application/json:
+              schema:
+                $ref: '../shared/components.yaml#/components/schemas/Health'
+              example:
+                status: ok
+
+  /feed/{npub}.xml:
+    get:
+      operationId: get_feed
+      tags: [feed]
+      summary: Feed RSS 2.0 del podcast Nostr di una chiave
+      description: |
+        Genera il feed leggendo dai relay gli eventi della chiave:
+
+        1. **relay** — lista NIP-65 (kind `10002`) presa dai relay indicizzatori, piu' un elenco
+           fisso di ripiego, piu' quelli di `?relays=`;
+        2. **kind 10154** (scheda del podcast, una sola versione, la piu' recente) — se manca,
+           `404`. Non viene inventato un canale a partire dal kind `0`;
+        3. **kind 0** — solo per `itunes:author` e `itunes:owner`, se presenti;
+        4. **kind 54** (episodi), ordinati per `created_at` decrescente. Zero episodi -> `200`
+           con il canale e nessun `<item>`: un feed vuoto e' valido.
+
+        Gli eventi con `id` incoerente o **firma non valida** vengono scartati: il feed accetta
+        relay dal chiamante, quindi non puo' fidarsi di cio' che un relay restituisce.
+
+        **Enclosure**: `url` e `type` vengono dal **primo** tag `audio` con MIME `audio/*`; gli
+        altri diventano `podcast:alternateEnclosure`. Un episodio senza alcun tag `audio` viene
+        saltato e contato in un commento in coda (`<!-- saltati: N senza audio -->`). NIP-F4 non
+        porta la dimensione del file: `length` si ottiene con una `HEAD` sull'URL, memorizzata in
+        cache per URL (gli URL Blossom sono content-addressed, il valore non cambia). Se la
+        `HEAD` non riesce: `length="0"` e un commento che lo dice — l'enclosure non si omette.
+
+        **Non dichiarato**: `itunes:duration` (non e' nell'evento e calcolarla costerebbe un
+        ffprobe per episodio) e `itunes:category` (non si inventa una categoria).
+      parameters:
+        - name: npub
+          in: path
+          required: true
+          description: Chiave pubblica, in bech32 (`npub1...`) **oppure** 64 esadecimali.
+          schema:
+            type: string
+            pattern: '^(npub1[023456789acdefghjklmnpqrstuvwxyz]{58}|[0-9a-fA-F]{64})$'
+          example: npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6
+        - name: lang
+          in: query
+          required: false
+          description: |
+            Lingua del canale (`<language>`). NIP-F4 non prevede un campo lingua, quindi non e'
+            deducibile dagli eventi: si dichiara qui.
+          schema:
+            type: string
+            default: it
+            pattern: '^[a-zA-Z]{2}(-[a-zA-Z]{2})?$'
+          example: it
+        - name: relays
+          in: query
+          required: false
+          description: |
+            Relay aggiuntivi separati da virgola (`wss://a,wss://b`), letti **in aggiunta** a
+            quelli scoperti. Solo `ws`/`wss` verso host pubblici; i primi 8 validi.
+          schema:
+            type: string
+          example: wss://relay.example.com,wss://altro.example.org
+      responses:
+        '200':
+          description: |
+            Feed RSS 2.0. `Cache-Control: public, max-age=300` ed `ETag` (hash del corpo).
+          headers:
+            Cache-Control:
+              schema: {type: string}
+              example: "public, max-age=300"
+            ETag:
+              schema: {type: string}
+              example: '"3f2b1c..."'
+            Access-Control-Allow-Origin:
+              schema: {type: string}
+              example: "*"
+          content:
+            application/rss+xml:
+              schema:
+                type: string
+        '304':
+          description: Non modificato (l'`If-None-Match` del client corrisponde all'`ETag`).
+          headers:
+            ETag:
+              schema: {type: string}
+            Cache-Control:
+              schema: {type: string}
+        '400':
+          description: Chiave non valida (ne' bech32 ne' 64 esadecimali)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedError'
+        '404':
+          description: |
+            Nessuna scheda podcast (kind 10154) per questa chiave **sui relay interrogati**. Il
+            corpo elenca i relay: senza, un podcast inesistente e' indistinguibile da uno cercato
+            nel posto sbagliato.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedError'
+              example:
+                detail: "nessuna scheda podcast (kind 10154) per questa chiave sui relay interrogati"
+                relays: ["wss://nos.lol", "wss://relay.damus.io", "wss://relay.primal.net"]
+        '429':
+          description: Troppe richieste da questo indirizzo IP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedError'
+
+components:
+  schemas:
+    FeedError:
+      type: object
+      required: [detail]
+      description: Errore del dominio feed. `relays` e' presente sul 404 ed e' la chiave diagnostica.
+      properties:
+        detail:
+          type: string
+        relays:
+          type: array
+          description: Relay effettivamente interrogati.
+          items:
+            type: string

@@ -138,6 +138,7 @@ jobs:
       # (./data/<dom>) vale solo per lo sviluppo locale.
       SOURCE_DATA_PATH: ${{ vars.SOURCE_DATA_PATH || '/opt/mediamgr/source' }}
       AUDIO_DATA_PATH: ${{ vars.AUDIO_DATA_PATH || '/opt/mediamgr/audio' }}
+      FEED_DATA_PATH: ${{ vars.FEED_DATA_PATH || '/opt/mediamgr/feed' }}
       MINIO_DATA_PATH: ${{ vars.MINIO_DATA_PATH || '/opt/mediamgr/minio' }}
     steps:
       - uses: actions/checkout@v4
