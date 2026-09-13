@@ -240,3 +240,45 @@ def test_cors_preflight_is_open(client):
         "Origin": "https://qualsiasi.example", "Access-Control-Request-Method": "GET"})
     assert r.status_code == 204
     assert r.headers["access-control-allow-origin"] == "*"
+
+
+# ── URL di se' stesso: schema esterno, non quello dell'ultimo hop ──────────────
+
+def _self_link(body: str) -> str:
+    return re.search(r'<atom:link href="([^"]+)"', body).group(1)
+
+
+def _guid(body: str) -> str:
+    return re.search(r"<podcast:guid>([^<]+)</podcast:guid>", body).group(1)
+
+
+def test_self_link_uses_the_forwarded_scheme(client):
+    """Il bug visto in produzione: dietro al proxy che termina il TLS il self-link usciva in
+    http, mentre l'URL sottomesso a Podcast Index era in https."""
+    body = client.get(f"/v0/feed/{_npub()}.xml", headers={
+        "X-Forwarded-Proto": "https", "Host": "mediamanager-dev.duckdns.org"}).text
+    assert _self_link(body) == f"https://mediamanager-dev.duckdns.org/v0/feed/{_npub()}.xml"
+
+
+def test_self_link_falls_back_to_the_request_scheme(client):
+    body = client.get(f"/v0/feed/{_npub()}.xml",
+                      headers={"Host": "mediamanager-dev.duckdns.org"}).text
+    assert _self_link(body).startswith("http://mediamanager-dev.duckdns.org/")
+
+
+def test_guid_is_the_same_over_http_and_https(client):
+    """Il guid e' l'UUIDv5 dell'URL **senza schema**: http e https sono lo stesso podcast.
+    Se self-link e guid si calcolassero per vie diverse, questo potrebbe divergere in silenzio."""
+    host = {"Host": "mediamanager-dev.duckdns.org"}
+    over_https = client.get(f"/v0/feed/{_npub()}.xml",
+                            headers={**host, "X-Forwarded-Proto": "https"}).text
+    over_http = client.get(f"/v0/feed/{_npub()}.xml", headers=host).text
+    assert _self_link(over_https) != _self_link(over_http)      # lo schema cambia...
+    assert _guid(over_https) == _guid(over_http)                # ...il guid no
+
+
+def test_self_link_uses_the_forwarded_host(client):
+    body = client.get(f"/v0/feed/{_npub()}.xml", headers={
+        "X-Forwarded-Proto": "https", "X-Forwarded-Host": "pubblico.example",
+        "Host": "interno:8080"}).text
+    assert _self_link(body).startswith("https://pubblico.example/")

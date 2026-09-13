@@ -110,6 +110,41 @@ cp deploy/proxy/letsencrypt/live/$SUB.duckdns.org/{fullchain,privkey}.pem deploy
 > **gitignored**: non vanno mai committati. `source` resta interno (nessuna rotta nel proxy), quindi
 > non e' esposto neppure via https.
 
+## Proxy in fila e schema esterno (`X-Forwarded-Proto`)
+
+Su questo host ci sono **due** reverse-proxy: l'nginx di sistema termina il TLS e parla in `http`
+al proxy del media-manager, che a sua volta parla ai container. Conseguenza: per i container
+`request.scheme` è **sempre** `http`, anche quando il client è arrivato in https.
+
+Chi compone URL assoluti deve quindi leggerli da `X-Forwarded-Proto`/`X-Forwarded-Host`, e il
+proxy intermedio deve **propagare** quegli header invece di riscriverli. `gen-nginx-conf.sh`
+genera perciò:
+
+```nginx
+map $http_x_forwarded_proto $proto_esterno {
+    default $http_x_forwarded_proto;   # c'è qualcuno davanti: vale il suo valore
+    ""      $scheme;                   # siamo noi il bordo: vale il nostro schema
+}
+proxy_set_header X-Forwarded-Proto $proto_esterno;
+```
+
+> **Sintomo se si rompe**: il feed esce con `<atom:link rel="self" href="http://…">` mentre viene
+> scaricato in https — e quell'URL finisce su Podcast Index. È successo: `proxy_set_header
+> X-Forwarded-Proto $scheme` sovrascriveva l'`https` ricevuto dall'nginx di sistema.
+> Un test di contratto ora verifica che né il generatore né la conf generata contengano più
+> `X-Forwarded-Proto $scheme`.
+
+Gli header `X-Forwarded-*` sono attendibili **solo perché** l'unico ingresso è il reverse-proxy:
+i container non sono raggiungibili direttamente. Se un giorno lo fossero, andrebbero filtrati
+sull'IP del proxy.
+
+Verifica dal vivo:
+
+```bash
+curl -s https://mediamanager-dev.duckdns.org/v0/feed/<npub>.xml | grep atom:link
+# atteso: href="https://..."
+```
+
 ## CORS dei domini pubblici (`media`, `content`)
 
 Il CORS e' gestito **nell'app** (`src/cors.py`), non in nginx: unica sede (niente header duplicati che
