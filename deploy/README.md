@@ -138,6 +138,11 @@ Gli header `X-Forwarded-*` sono attendibili **solo perché** l'unico ingresso è
 i container non sono raggiungibili direttamente. Se un giorno lo fossero, andrebbero filtrati
 sull'IP del proxy.
 
+> Perché il fix arrivi sull'host, `deploy/proxy/**` è fra i **file condivisi** della detection in
+> `generate-api.yml`: senza, una modifica alla sola conf nginx non impatterebbe alcun dominio e
+> non verrebbe mai applicata. Stesso criterio per i moduli condivisi in `src/` (`cors.py`,
+> `security.py`, `signed_url.py`, `net_guard.py`, `rate_limit.py`, `external_url.py`).
+
 Verifica dal vivo:
 
 ```bash

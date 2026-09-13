@@ -417,6 +417,10 @@ dall'ultimo hop.
 - Test: con `X-Forwarded-Proto: https` il self-link e' https, senza header e' lo schema della
   richiesta, e il `guid` e' identico nei due casi. Piu' un controllo che ne' il generatore ne' la
   conf generata contengano ancora `X-Forwarded-Proto $scheme`.
+- **Stesso buco di detection della #20, chiuso**: una modifica a `deploy/proxy/` o a un modulo
+  condiviso in `src/` (cors, security, signed_url, net_guard, rate_limit, external_url) non
+  corrispondeva a nessun pattern e **non faceva scattare alcun deploy**. Il criterio ora e': se
+  toccandolo puo' cambiare il comportamento di piu' di un dominio, e' un file condiviso.
 
 ## Prossimi passi suggeriti
 
