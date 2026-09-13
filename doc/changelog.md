@@ -422,6 +422,20 @@ dall'ultimo hop.
   corrispondeva a nessun pattern e **non faceva scattare alcun deploy**. Il criterio ora e': se
   toccandolo puo' cambiare il comportamento di piu' di un dominio, e' un file condiviso.
 
+## 26. URL assoluti nel feed (2026-09-13)
+
+Su un podcast reale il tag `website` valeva `tbc159.github.io/NostrMediaClient`, **senza schema**,
+e finiva verbatim in `<link>`: non e' un URL valido in RSS — i validatori lo segnalano e i client
+lo interpretano come path relativo al proprio host.
+
+- `website`, `image` (canale ed episodio) e gli **URL audio** degli enclosure vengono completati
+  con `https://`: host e path restano quelli scritti dall'autore, non si inventa informazione.
+- Cio' che non assomiglia a un URL web (`mailto:`, `javascript:`, testo qualsiasi, o
+  protocol-relative `//host`) viene scartato e si usa il ripiego — meglio `njump.me` che un link
+  rotto nel feed.
+- Test: tabella dei casi piu' una **guardia complessiva** che nessun `<link>`, `href`, `uri` o
+  `url` possa uscire dal builder senza schema.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

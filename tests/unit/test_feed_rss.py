@@ -295,3 +295,59 @@ def test_enclosure_store_degrades_to_memory_when_the_volume_is_missing(caplog):
     assert "cache enclosure non disponibile" in caplog.text
     store.put("https://x/a.mp3", 42)
     assert store.get("https://x/a.mp3") == (True, 42)      # funziona comunque, in memoria
+
+
+# ── URL assoluti (gli eventi Nostr spesso ne portano senza schema) ─────────────
+
+@pytest.mark.parametrize("raw,expected", [
+    ("https://e.org/x", "https://e.org/x"),
+    ("http://e.org/x", "http://e.org/x"),
+    ("tbc159.github.io/NostrMediaClient", "https://tbc159.github.io/NostrMediaClient"),
+    ("e.org", "https://e.org"),
+    ("//e.org/x", None),                 # protocol-relative: non e' un URL assoluto
+    ("mailto:a@e.org", None),
+    ("javascript:alert(1)", None),
+    ("non un url", None),
+    ("", None),
+    (None, None),
+])
+def test_absolute_url_completes_or_discards(raw, expected):
+    assert rss_builder.absolute_url(raw) == expected
+
+
+def test_schemeless_website_becomes_an_absolute_link():
+    """Caso reale: il tag website era `tbc159.github.io/NostrMediaClient`, e finiva in <link>
+    senza schema — non un URL valido in RSS, i client lo leggono come path relativo."""
+    card = make_event(SK, kind=10154, created_at=1, tags=[
+        ["title", "T"], ["website", "tbc159.github.io/NostrMediaClient"]])
+    body = _build(card=card)
+    assert "<link>https://tbc159.github.io/NostrMediaClient</link>" in body
+    assert "<link>tbc159.github.io" not in body
+
+
+def test_unusable_website_falls_back_to_njump():
+    card = make_event(SK, kind=10154, created_at=1, tags=[
+        ["title", "T"], ["website", "mailto:a@e.org"]])
+    assert "<link>https://njump.me/npub1" in _build(card=card)
+
+
+def test_schemeless_audio_url_is_completed_in_the_enclosure():
+    event = make_event(SK, kind=54, created_at=1, tags=[
+        ["title", "T"], ["audio", "blossom.example.org/a.mp3", "audio/mpeg"]])
+    assert rss_builder.audio_tags(event) == [("https://blossom.example.org/a.mp3", "audio/mpeg")]
+
+
+def test_every_url_in_the_generated_feed_is_absolute():
+    """Guardia complessiva: nessun <link>, href o uri senza schema puo' uscire dal builder."""
+    import re
+
+    card = make_event(SK, kind=10154, created_at=1, tags=[
+        ["title", "T"], ["website", "e.org/sito"], ["image", "cdn.e.org/c.png"]])
+    event = make_event(SK, kind=54, created_at=2, tags=[
+        ["title", "E"], ["image", "cdn.e.org/e.png"],
+        ["audio", "cdn.e.org/a.mp3", "audio/mpeg"]])
+    body = _build(card=card, episodes=[event])
+    urls = (re.findall(r"<link>([^<]+)</link>", body)
+            + re.findall(r'(?:href|uri|url)="([^"]+)"', body))
+    non_assoluti = [u for u in urls if not u.startswith(("http://", "https://"))]
+    assert non_assoluti == [], non_assoluti
