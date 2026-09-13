@@ -711,6 +711,177 @@ persistente. ffmpeg e' installato nell'immagine **solo** per `DOMAIN=audio` (Doc
 
 ---
 
+## Dominio `feed` — RSS dei podcast Nostr (pubblico, senza auth)
+
+`feed` pubblica un **feed RSS 2.0 per ogni podcast Nostr** (NIP-F4), generato leggendo dai relay
+i kind `10154` (scheda del podcast) e `54` (episodi) di una chiave. Contratto:
+`openapi/feed/api.yaml`. Non tocca `source` e non produce media: legge da Nostr e restituisce XML.
+
+```
+App di podcast / Podcast Index ──► GET /v0/feed/{npub}.xml ──► [feed] ──(wss)──► relay Nostr
+                                   (nessun header, cache)              └──(HEAD)──► URL audio
+```
+
+### È l'unico dominio che rompe tre invarianti del progetto
+
+| | `feed` | gli altri domini |
+|---|---|---|
+| Autenticazione | **nessuna** | `X-API-Key` |
+| CORS | **`*`** | origini in allowlist, riecheggiate |
+| Cache | `Cache-Control` + `ETag` + `304` | nessuna |
+| Limiti | **rate limit per IP** | nessuno |
+
+Perché: **un feed lo scaricano le app di podcast e gli aggregatori**, che non conoscono la chiave
+API — richiederla significherebbe che il feed non funziona. Un feed è per definizione pubblico,
+quindi non c'è nulla da proteggere con un CORS ristretto. Restano però due conseguenze, ed è lì
+che stanno le difese: senza credenziali l'unico controllo è il **rate limit per IP**, e senza
+cache ogni lettura aprirebbe WebSocket verso i relay.
+
+L'eccezione è **dichiarata nel codice, non implicita**: il marker `openapi/feed/.open` è ciò che
+attiva il CORS `*` (`src/cors.py`), e un test di contratto verifica che un dominio `.open` non
+dichiari alcuno schema di sicurezza — e, simmetricamente, che gli altri ne dichiarino uno su ogni
+operazione. Aggiungere `security` a `feed` per simmetria romperebbe le app di podcast: il test lo
+impedisce.
+
+### Endpoint
+
+| Endpoint | Cosa fa |
+|---|---|
+| `GET /v0/feed/health` | health check |
+| `GET /v0/feed/{npub}.xml` | il feed. `{npub}` in bech32 (`npub1...`) **o** 64 esadecimali |
+
+Parametri: `?lang=` (default `it` — NIP-F4 non prevede la lingua, quindi non è deducibile dagli
+eventi) e `?relays=wss://a,wss://b` (letti **in aggiunta** a quelli scoperti).
+
+Risposte: `200` `application/rss+xml` con `Cache-Control: public, max-age=300` ed `ETag`;
+`304` su `If-None-Match` corrispondente; `400` chiave non valida; `404` nessuna scheda podcast;
+`429` oltre il rate limit.
+
+### Da dove legge, e come si diagnostica un feed vuoto
+
+> **Il difetto più probabile di questo dominio non è un bug: è il relay sbagliato.** Gli eventi
+> stanno altrove e la risposta è un canale senza episodi — corretto, ma inutile, e silenzioso.
+
+Per questo l'insieme dei relay si costruisce da più fonti **e viene dichiarato nella risposta**:
+
+1. **NIP-65** (kind `10002`) della chiave, letta dai relay *indicizzatori* (`purplepag.es`,
+   `user.kindpag.es`). Si usano i relay di **scrittura** dell'autore: quelli marcati `read` sono
+   dove *lui* legge, non dove pubblica.
+2. **Ripiego fisso** (`relay.damus.io`, `nos.lol`, `relay.primal.net`) per le chiavi senza 10002.
+3. **`?relays=`** del chiamante.
+
+Ogni feed dichiara in testa i relay interrogati — `<!-- relays: wss://a, wss://b -->` — e il `404`
+li elenca nel corpo. Senza, un podcast inesistente è indistinguibile da uno cercato nel posto
+sbagliato.
+
+Poi: kind `10154` (una versione, la più recente; **se manca è `404`**, non si inventa un canale
+dal kind `0`), kind `0` solo per `itunes:author`/`itunes:owner`, kind `54` ordinati per
+`created_at` decrescente. **Zero episodi è un `200`** con il canale e nessun `<item>`: un feed
+vuoto è valido.
+
+### Gli eventi vengono verificati, non creduti
+
+Il feed accetta relay dal chiamante, quindi non può fidarsi di ciò che un relay restituisce:
+senza verifica, `?relays=wss://ostile` farebbe servire al nostro dominio contenuti arbitrari
+attribuiti a un `npub` altrui — e quell'URL finisce su Podcast Index. Tre controlli, in ordine di
+costo (`src/domains/feed/nostr/events.py`):
+
+1. **forma** — campi presenti e del tipo giusto;
+2. **id** — sha256 della serializzazione NIP-01: scopre un relay che *altera* il contenuto;
+3. **firma BIP-340** — l'unico che scopre un evento **fabbricato**: chi altera il contenuto
+   ricalcola anche l'id, ma non sa rifirmare.
+
+La verifica Schnorr è in Python puro (`nostr/schnorr.py`): ~60 righe di aritmetica modulare
+invece di una dipendenza binaria, con un costo di qualche millisecondo per evento che la cache
+assorbe. `FEED_VERIFY_SIGNATURES=0` la disattiva, ma **non farlo**: è ciò che rende il feed non
+falsificabile. Gli eventi che non passano vengono scartati e contati nei log.
+
+### Mappatura NIP-F4 → RSS
+
+**Canale**: `title`/`description`/`image` dal 10154; `<link>` dal primo tag `website`, altrimenti
+`https://njump.me/<npub>`; `<language>` da `?lang`; `<itunes:author>`/`<itunes:owner>` dal kind 0
+(altrimenti l'npub); `<itunes:explicit>false</itunes:explicit>` (NIP-F4 non ha il campo);
+`<generator>`; `<atom:link rel="self">`; `<podcast:guid>` = **UUIDv5** dell'URL del feed *senza
+schema* nel namespace di Podcasting 2.0 — è così che Podcast Index deduplica, e deve restare
+stabile.
+
+> L'URL usato per il guid e per `rel="self"` è sempre in **forma npub**, anche se la richiesta è
+> arrivata in esadecimale: altrimenti lo stesso podcast risulterebbe due feed distinti.
+
+**Item** (uno per kind 54): `title`, `description`, `content:encoded` (Markdown → HTML
+sanificato), `<guid isPermaLink="false">` = id dell'evento, `<pubDate>` RFC 822,
+`<link>` = `njump.me/<nevent>` con relay hint, `<itunes:image>`, `<enclosure>`.
+
+**Non si inventa**: `<itunes:category>` (non è nell'evento) e `<itunes:duration>` (costerebbe un
+`ffprobe` per episodio — se un giorno servisse, con la stessa cache per URL). Se il 10154 non ha
+`image`, `<itunes:image>` **manca** e il feed lo dichiara in un commento: Apple lo richiede, ma
+l'avatar del kind 0 è l'autore, non la copertina del podcast.
+
+### Enclosure: `length` e il perché di una HEAD
+
+NIP-F4 non porta la dimensione del file, ma RSS vuole `length`. Si ottiene con una **HEAD**
+sull'URL, memorizzata in una **cache persistente per URL** (`FEED_DB_PATH`): gli URL Blossom sono
+*content-addressed*, quindi a URL uguale corrisponde per costruzione lo stesso contenuto e il
+valore non cambia mai. L'URL viene da un evento, cioè dall'esterno: la HEAD passa dalla stessa
+guardia SSRF del download di `media` (`src/net_guard.py`). Se fallisce: `length="0"` più un
+commento che lo dice — l'enclosure **non** si omette, perché un item senza enclosure non è un
+episodio per nessun aggregatore.
+
+`url` e `type` vengono dal **primo** tag `audio` con MIME `audio/*`; gli altri diventano
+`<podcast:alternateEnclosure>`. Un episodio senza alcun tag `audio` viene saltato e contato in
+coda: `<!-- saltati: N senza audio -->`.
+
+### Cache: perché sta anche lato server
+
+`Cache-Control` ed `ETag` risparmiano banda ai client, ma **non risparmiano un solo accesso ai
+relay**: per rispondere `304` bisogna comunque conoscere l'ETag corrente, cioè avere il corpo.
+Senza una cache lato server ogni `If-None-Match` aprirebbe una manciata di WebSocket. Per questo
+il corpo generato resta in memoria per `FEED_CACHE_TTL_S` (default 300 s, = il `max-age`) e il
+`304` si risponde da lì.
+
+Perché funzioni, **il corpo dev'essere deterministico**: niente `now()` (il `lastBuildDate` deriva
+dall'evento più recente), relay ordinati, episodi ordinati con `id` come spareggio. E le date RFC
+822 sono scritte con nomi inglesi a mano: `strftime("%a, %d %b")` dipende dal locale del
+container e con `LANG=it_IT` produrrebbe `Sab, 13 Set`, che i validatori rifiutano.
+
+### Sanificazione di `content:encoded`
+
+Il contenuto arriva da chiunque e finisce in un HTML che le app renderizzano. Si usa
+markdown-it-py con **`html=False`**: non è un dettaglio di configurazione, è la sanificazione
+stessa — l'HTML grezzo viene **escapato** (`<script>` diventa testo) e i link con schemi
+pericolosi (`javascript:`, `data:text/html`) sono scartati dal validatore integrato. Attenzione:
+il preset `commonmark` abilita `html`, quindi la sicurezza sta nell'override. Un test lo verifica
+in entrambe le direzioni.
+
+### Architettura
+
+```
+controllers/feed_controller.py    thin: rate limit -> service -> (200 | 304 | 400 | 404 | 429)
+        │  (assemblato da)
+factory.py ── build_feed_service() ── FEED_DB_PATH
+        │
+services/feed_service.py          orchestrazione + cache del corpo generato (ETag)
+        ├── services/discovery.py         relay: NIP-65 -> ripiego -> ?relays=, ordinati
+        ├── services/rss_builder.py       Pillow-style: puro, (eventi) -> XML deterministico
+        ├── services/markdown_html.py     Markdown -> HTML sanificato
+        ├── services/enclosure_probe.py   HEAD + guardia SSRF condivisa
+        ├── repositories/enclosure_store.py   cache persistente url -> Content-Length
+        └── nostr/{relay_client,events,nip19,schnorr}.py
+```
+
+`nip19.py` (bech32 + TLV di `nevent`) e `schnorr.py` sono scritti qui invece di aggiungere
+dipendenze: il primo è BIP-173 più una parte specifica di Nostr che nessuna libreria generica
+fornisce, il secondo è ~60 righe. Entrambi sono verificati sui **vettori ufficiali** e su dati
+reali della rete.
+
+### Fuori perimetro
+
+Nessuna scrittura su Nostr (la firma degli eventi esiste solo in `tests/nostr_fixtures.py`, per
+produrre fixture che passino la verifica vera). Nessuna sottomissione automatica a Podcast Index:
+la fa l'utente, una volta, con l'URL che il client gli mostra.
+
+---
+
 ## Aggiungere un nuovo dominio
 
 Grazie alla discovery, basta:

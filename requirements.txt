@@ -3,3 +3,7 @@ connexion[flask,uvicorn]>=3.1,<4
 minio>=7.2,<8
 # Generazione immagini (dominio content): copertine/social via Pillow.
 Pillow>=10.3,<12
+# Dominio feed: client WebSocket per i relay Nostr e Markdown -> HTML per <content:encoded>.
+# markdown-it-py e' usato con html=False: e' quello che sanifica l'HTML degli eventi.
+websockets>=12,<16
+markdown-it-py>=3,<4

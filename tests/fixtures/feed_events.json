@@ -1,0 +1,88 @@
+{
+  "pubkey": "5c87e84ce348701797e190282507897370f48448f3ab45f821b98f153b8f9f80",
+  "card": {
+    "pubkey": "5c87e84ce348701797e190282507897370f48448f3ab45f821b98f153b8f9f80",
+    "created_at": 1757000000,
+    "kind": 10154,
+    "tags": [
+      [
+        "title",
+        "Radio Satoshi"
+      ],
+      [
+        "description",
+        "Conversazioni su Bitcoin, ogni settimana."
+      ],
+      [
+        "image",
+        "https://cdn.example.org/radio-satoshi.png"
+      ],
+      [
+        "website",
+        "https://radiosatoshi.example.org"
+      ]
+    ],
+    "content": "",
+    "id": "3fe3ddacf0a75a124c0342f93703b31805cbc8ffe42e387f96d465b8046493d3",
+    "sig": "ee53649a9bf5a18ff808c303137bc72ffcb9976d5215e69a30c8cf2e42172bbb3a815880189381c690b404f5f53acf9100c28d541e48c765b81b07da30a8b3ce"
+  },
+  "profile": {
+    "pubkey": "5c87e84ce348701797e190282507897370f48448f3ab45f821b98f153b8f9f80",
+    "created_at": 1756000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\": \"alice\", \"display_name\": \"Alice Rossi\"}",
+    "id": "ec03f68a53bbb0781461a81964c6a29b7dc08f58a7c7c72bb12a8ea631ff4891",
+    "sig": "ccc10b5a1e3c73238a734578b706f519ff57ca53dcbb4c20db82ace1c34e22737b1e48cacfea135b93d8175f59e28af6aac82a895b0e8f26044d6b0f3015a5aa"
+  },
+  "ep1": {
+    "pubkey": "5c87e84ce348701797e190282507897370f48448f3ab45f821b98f153b8f9f80",
+    "created_at": 1757100000,
+    "kind": 54,
+    "tags": [
+      [
+        "title",
+        "Episodio 2 — La custodia"
+      ],
+      [
+        "description",
+        "Chiavi, seed e paranoia sana."
+      ],
+      [
+        "image",
+        "https://cdn.example.org/ep2.png"
+      ],
+      [
+        "audio",
+        "https://blossom.example.org/aaaa.mp3",
+        "audio/mpeg"
+      ],
+      [
+        "audio",
+        "https://blossom.example.org/aaaa.m4a",
+        "audio/mp4"
+      ]
+    ],
+    "content": "Parliamo di **custodia**.\n\n<script>alert(1)</script>\n\n[link](javascript:alert(1))",
+    "id": "33d25dddc45e7ef190ec3c7bda204023651457887b0b055668cd89040539e203",
+    "sig": "79742d1f4b07fffeb81250da2034762a3316c540ec2c5809c4e3835ecb3b8676b48c763a187d1b154269c909b3666e59f6a27b0105df64a0643b1b000bb44d35"
+  },
+  "ep_no_audio": {
+    "pubkey": "5c87e84ce348701797e190282507897370f48448f3ab45f821b98f153b8f9f80",
+    "created_at": 1757050000,
+    "kind": 54,
+    "tags": [
+      [
+        "title",
+        "Episodio 1 — Solo note"
+      ],
+      [
+        "description",
+        "Nessun file audio allegato."
+      ]
+    ],
+    "content": "",
+    "id": "8e0239336efaca3a2623c9e153f66756dc604eb1b79eb0ec8cd2f922f4f1ca20",
+    "sig": "c8fd43ec0189a995d80bfdd6709b2d0aefaae91b1cc94a45bfad6cc272c9513e0226a7cf66a4477f24f9dc1ef217130989a49e630f3146c3512d5989ac804fa2"
+  }
+}

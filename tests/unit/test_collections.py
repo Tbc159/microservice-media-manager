@@ -51,14 +51,47 @@ def test_no_selfreferential_components():
                 assert ref is None, f"{domain}: {category}/{name} e' ancora un $ref ({ref}) invece del contenuto"
 
 
+def _is_open(domain: str) -> bool:
+    """Dominio aperto = marker openapi/<dom>/.open: nessuna autenticazione (oggi: feed)."""
+    return (ROOT / "openapi" / domain / ".open").exists()
+
+
 def test_apikey_scheme_resolved():
     # il nome esatto dell'header deve essere desumibile dalla spec
     for domain, spec in _bundles().items():
+        if _is_open(domain):
+            continue
         scheme = spec["components"]["securitySchemes"]["ApiKeyAuth"]
         assert scheme["type"] == "apiKey"
         assert scheme["in"] == "header"
         assert scheme["name"] == "X-API-Key"
         assert "x-apikeyInfoFunc" not in scheme  # wiring server-side non esposto ai consumer
+
+
+def test_open_domains_declare_no_security_at_all():
+    """L'assenza di autenticazione su un dominio aperto e' una scelta, e va tenuta ferma.
+
+    Il rischio non e' dimenticare di aggiungerla: e' che qualcuno la aggiunga a `feed` per
+    simmetria con gli altri domini, rompendo le app di podcast (che non hanno una chiave).
+    Simmetricamente, un dominio NON marcato `.open` non deve avere operazioni senza security.
+    """
+    for domain, spec in _bundles().items():
+        operations = [
+            (path, method, op)
+            for path, item in spec["paths"].items()
+            for method, op in item.items()
+            if isinstance(op, dict)
+        ]
+        if _is_open(domain):
+            assert "securitySchemes" not in spec.get("components", {}), \
+                f"{domain} e' marcato .open ma dichiara schemi di sicurezza"
+            for path, method, op in operations:
+                assert "security" not in op, f"{domain}: {method} {path} ha security ma e' .open"
+        else:
+            for path, method, op in operations:
+                if path.endswith("/health"):
+                    continue
+                assert op.get("security"), f"{domain}: {method} {path} senza security"
 
 
 def test_servers_absolute_and_no_prod_host():

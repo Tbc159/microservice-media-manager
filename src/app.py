@@ -37,6 +37,11 @@ def _is_internal(domain: str) -> bool:
     return (OPENAPI_DIR / domain / ".internal").exists()
 
 
+def _is_open(domain: str) -> bool:
+    """Dominio aperto = marker openapi/<dom>/.open: nessuna auth, CORS `*` (oggi: feed)."""
+    return (OPENAPI_DIR / domain / ".open").exists()
+
+
 def create_app(domains=None, mock=False):
     domains = domains if domains is not None else discover_domains()
     app = connexion.FlaskApp(__name__, specification_dir=str(OPENAPI_DIR))
@@ -57,7 +62,8 @@ def create_app(domains=None, mock=False):
     # CORS solo sui domini PUBBLICI (source, interno, resta escluso). Gestito qui e NON in
     # nginx per evitare header duplicati e per poter testare il preflight (vedi src/cors.py).
     public_domains = [d for d in domains if not _is_internal(d)]
-    install_cors(app, public_domains, allowed_origins_from_env())
+    open_domains = [d for d in public_domains if _is_open(d)]
+    install_cors(app, public_domains, allowed_origins_from_env(), open_domains)
     return app
 
 

@@ -363,6 +363,39 @@ quindi restano sul codice vecchio.
 - `deploy/README.md`: la regola per i domini con volume — path dati **fuori** dal workspace — e la
   procedura di recupero se la directory root-owned e' gia' stata creata.
 
+## 24. Dominio `feed` — RSS dei podcast Nostr (NIP-F4) (2026-09-13)
+
+Nuovo dominio pubblico che genera un **feed RSS 2.0 per ogni podcast Nostr**, leggendo dai relay i
+kind `10154` (scheda) e `54` (episodi) di una chiave. `GET /v0/feed/{npub}.xml`, npub in bech32 o
+64 esadecimali.
+
+- **Prima eccezione alle invarianti del progetto, dichiarata e presidiata**: niente
+  autenticazione (lo scaricano le app di podcast, che non hanno la chiave API), CORS `*`, cache
+  con `ETag`/`304`, rate limit per IP. L'eccezione e' attivata dal marker `openapi/feed/.open`, e
+  un test di contratto verifica che un dominio `.open` non dichiari sicurezza **e** che gli altri
+  la dichiarino su ogni operazione: aggiungere `security` a `feed` per simmetria romperebbe le
+  app di podcast.
+- **Gli eventi si verificano, non si credono**: forma, `id` (sha256 NIP-01) e **firma BIP-340**.
+  Il feed accetta relay dal chiamante (`?relays=`): senza verifica della firma un relay ostile
+  farebbe servire contenuti arbitrari attribuiti a un `npub` altrui. Schnorr e NIP-19 sono scritti
+  in casa (~60 e ~40 righe) invece di aggiungere dipendenze, e verificati sui vettori ufficiali
+  BIP-173 e su eventi reali della rete.
+- **Un feed vuoto si diagnostica**: i relay interrogati sono dichiarati in testa
+  (`<!-- relays: ... -->`) e nel corpo del `404`. Sono l'unione di NIP-65 (relay di *scrittura*
+  dell'autore, presi dagli indicizzatori), un ripiego fisso e `?relays=`.
+- **Cache anche lato server**: per rispondere `304` serve comunque l'ETag corrente, cioe' il
+  corpo — senza, ogni `If-None-Match` riaprirebbe i WebSocket. Il corpo e' deterministico
+  (`lastBuildDate` dall'evento piu' recente, relay ed episodi ordinati, date RFC 822 scritte a
+  mano perche' `strftime` dipende dal locale del container).
+- **`length` dell'enclosure** via HEAD con guardia SSRF condivisa, in cache persistente per URL
+  (gli URL Blossom sono content-addressed). HEAD fallita -> `length="0"` e un commento: l'enclosure
+  non si omette, o l'item non e' un episodio per nessun aggregatore.
+- **Non si inventa**: niente `itunes:category`, niente `itunes:duration`, e nessun canale dedotto
+  dal kind 0. Se il 10154 non ha `image` il feed lo dichiara in un commento invece di usare
+  l'avatar dell'autore (caso riscontrato su podcast reali).
+- **`src/net_guard.py`**: la guardia SSRF passa da `media` a modulo condiviso — due copie
+  sarebbero divergenti, e una guardia SSRF divergente e' una guardia rotta.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione
