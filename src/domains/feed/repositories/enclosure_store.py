@@ -9,10 +9,13 @@ contenuto), quindi a URL uguale corrisponde per costruzione lo stesso byte-strea
 non Blossom vale la stessa assunzione degli aggregatori: un enclosure non cambia sotto lo
 stesso indirizzo. Si memorizzano anche i fallimenti (length NULL) per non ritentare a raffica.
 """
+import logging
 import os
 import sqlite3
 import time
-from typing import Optional
+from typing import Dict, Optional
+
+logger = logging.getLogger("feed")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS enclosure (
@@ -29,10 +32,28 @@ def db_path() -> str:
 
 
 class EnclosureStore:
+    """Cache su SQLite, con **degradazione a memoria** se il file non e' apribile.
+
+    Il service viene costruito all'import del controller: se il volume non e' montato, aprire
+    il DB solleverebbe e il dominio non partirebbe affatto. Ma questa cache e' un'ottimizzazione,
+    non un dato: senza, il feed funziona lo stesso e si limita a rifare le HEAD. Un volume
+    mancante deve degradare le prestazioni, non impedire l'avvio — e lasciare una traccia nei log.
+    """
+
     def __init__(self, path: Optional[str] = None) -> None:
         self._path = path or db_path()
-        with self._connect() as conn:
-            conn.executescript(_SCHEMA)
+        self._memory: Optional[Dict[str, tuple]] = None
+        try:
+            parent = os.path.dirname(self._path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with self._connect() as conn:
+                conn.executescript(_SCHEMA)
+        except (sqlite3.Error, OSError) as exc:
+            logger.warning(
+                "cache enclosure non disponibile su '%s' (%s): si prosegue in memoria, "
+                "le HEAD verranno rifatte a ogni riavvio", self._path, exc)
+            self._memory = {}
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, timeout=10)
@@ -42,10 +63,13 @@ class EnclosureStore:
     def get(self, url: str, *, now: Optional[int] = None):
         """`(trovato, length)`. `trovato=False` se assente o se un fallimento e' da ritentare."""
         now = int(now if now is not None else time.time())
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT length, checked_at FROM enclosure WHERE url = ?", (url,)
-            ).fetchone()
+        if self._memory is not None:
+            row = self._memory.get(url)
+        else:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT length, checked_at FROM enclosure WHERE url = ?", (url,)
+                ).fetchone()
         if row is None:
             return False, None
         length, checked_at = row
@@ -55,6 +79,9 @@ class EnclosureStore:
 
     def put(self, url: str, length: Optional[int], *, now: Optional[int] = None) -> None:
         now = int(now if now is not None else time.time())
+        if self._memory is not None:
+            self._memory[url] = (length, now)
+            return
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO enclosure (url, length, checked_at) VALUES (?, ?, ?) "

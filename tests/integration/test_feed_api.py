@@ -25,10 +25,13 @@ ITUNES = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
 
 
 @pytest.fixture(autouse=True)
-def _no_dns(monkeypatch):
+def _no_dns(monkeypatch, tmp_path):
     # I relay di ripiego sono nomi finti: senza questo, discovery farebbe una risoluzione DNS
     # reale. La guardia SSRF vera e' provata in tests/unit/test_feed_rss.py.
     monkeypatch.setattr(discovery, "is_public", lambda url: True)
+    # Il controller costruisce il service all'import: senza questo userebbe /data/feed.db,
+    # che sul runner di CI non esiste.
+    monkeypatch.setenv("FEED_DB_PATH", str(tmp_path / "feed.db"))
     monkeypatch.setenv("FEED_FALLBACK_RELAYS", "wss://nos.example,wss://damus.example")
     monkeypatch.setenv("FEED_INDEXER_RELAYS", "wss://indice.example")
     monkeypatch.delenv("FEED_CACHE_TTL_S", raising=False)

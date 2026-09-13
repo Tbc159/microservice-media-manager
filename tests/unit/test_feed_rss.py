@@ -286,3 +286,12 @@ def test_missing_image_is_declared_not_invented():
     assert channel.find(f"{itunes}image") is None       # il canale non ne ha
     assert channel.find(f"item/{itunes}image") is not None   # l'episodio si': e' un altro campo
     assert "image assente nel kind 10154" in body
+
+
+def test_enclosure_store_degrades_to_memory_when_the_volume_is_missing(caplog):
+    """Il service si costruisce all'import: un volume non montato deve degradare, non impedire
+    l'avvio. La cache e' un'ottimizzazione — senza, si rifanno le HEAD."""
+    store = EnclosureStore("/proc/non-scrivibile/feed.db")
+    assert "cache enclosure non disponibile" in caplog.text
+    store.put("https://x/a.mp3", 42)
+    assert store.get("https://x/a.mp3") == (True, 42)      # funziona comunque, in memoria
