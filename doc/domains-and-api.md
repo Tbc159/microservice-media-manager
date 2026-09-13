@@ -821,6 +821,13 @@ stabile.
 sanificato), `<guid isPermaLink="false">` = id dell'evento, `<pubDate>` RFC 822,
 `<link>` = `njump.me/<nevent>` con relay hint, `<itunes:image>`, `<enclosure>`.
 
+> **URL assoluti.** Gli eventi Nostr portano spesso URL **senza schema** (`tbc159.github.io/x`):
+> in un `<link>` o in un `enclosure` non sono URL validi — i validatori li segnalano e i client
+> li leggono come path relativi al proprio host. `website`, `image` e gli URL audio vengono
+> completati con `https://` (host e path restano quelli dell'autore, non si inventa niente); ciò
+> che non assomiglia a un URL web — `mailto:`, `javascript:`, testo qualsiasi — viene scartato e
+> si usa il ripiego (`njump.me` per il `<link>`, nessuna immagine).
+
 **Non si inventa**: `<itunes:category>` (non è nell'evento) e `<itunes:duration>` (costerebbe un
 `ffprobe` per episodio — se un giorno servisse, con la stessa cache per URL). Se il 10154 non ha
 `image`, `<itunes:image>` **manca** e il feed lo dichiara in un commento: Apple lo richiede, ma

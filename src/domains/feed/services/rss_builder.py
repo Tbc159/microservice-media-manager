@@ -13,6 +13,7 @@ Cio' che non si sa non si inventa: niente `<itunes:category>`, niente `<itunes:d
 """
 import uuid
 from typing import Dict, List, Optional, Sequence
+from urllib.parse import urlparse
 from xml.sax.saxutils import escape, quoteattr
 
 from src.domains.feed.nostr import nip19
@@ -48,11 +49,35 @@ def audio_tags(event: dict) -> List[Sequence[str]]:
     """Tag `audio` con MIME `audio/*`, nell'ordine dell'evento. Il primo diventa l'enclosure."""
     out = []
     for values in tag_values(event, "audio"):
-        url = values[0] if values else None
+        url = absolute_url(values[0] if values else None)
         mime = values[1] if len(values) > 1 else None
         if url and mime and mime.lower().startswith("audio/"):
             out.append((url, mime))
     return out
+
+
+def absolute_url(value: Optional[str]) -> Optional[str]:
+    """URL assoluto, o None se il valore non e' utilizzabile come URL.
+
+    Gli eventi Nostr portano spesso URL **senza schema** (`tbc159.github.io/x`): finiti in un
+    `<link>` o in un `enclosure` non sono URL validi — i validatori li segnalano e i client li
+    interpretano come path relativi al proprio host. Qui si completa con `https://`, che non
+    inventa informazione (host e path restano quelli scritti dall'autore) e oggi e' il default
+    ragionevole. Cio' che non assomiglia a un URL (uno schema diverso, o del testo qualsiasi)
+    viene scartato: meglio il ripiego del chiamante che un link rotto nel feed.
+    """
+    value = (value or "").strip()
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme in ("http", "https") and parsed.netloc:
+        return value
+    if parsed.scheme:                      # mailto:, ftp:, javascript:... non e' un link web
+        return None
+    host = value.split("/", 1)[0]
+    if "." not in host or " " in host:     # non assomiglia a un host
+        return None
+    return f"https://{value}"
 
 
 def _cdata(text: str) -> str:
@@ -99,8 +124,8 @@ def build_feed(
     npub = nip19.hex_to_npub(pubkey_hex)
     title = first_tag_value(card, "title") or npub
     description = first_tag_value(card, "description") or ""
-    image = first_tag_value(card, "image")
-    website = first_tag_value(card, "website") or f"{NJUMP}{npub}"
+    image = absolute_url(first_tag_value(card, "image"))
+    website = absolute_url(first_tag_value(card, "website")) or f"{NJUMP}{npub}"
     author = _author_name(profile, npub)
 
     out = ['<?xml version="1.0" encoding="UTF-8"?>\n']
@@ -166,7 +191,7 @@ def _item(event: dict, pubkey_hex: str, lengths: Dict[str, Optional[int]],
 
     title = first_tag_value(event, "title") or ""
     description = first_tag_value(event, "description") or ""
-    image = first_tag_value(event, "image")
+    image = absolute_url(first_tag_value(event, "image"))
     url, mime = audio_tags(event)[0]
     length = lengths.get(url)
     nevent = nip19.encode_nevent(event["id"], relays=relay_hints, author_hex=pubkey_hex,
