@@ -37,6 +37,7 @@ _SCHEMES = ("wss", "ws")
 class Discovery:
     relays: List[str] = field(default_factory=list)
     from_nip65: List[str] = field(default_factory=list)
+    indexers_queried: List[str] = field(default_factory=list)
     indexers_reached: List[str] = field(default_factory=list)
 
 
@@ -117,6 +118,7 @@ def discover(pubkey_hex: str, extra: Sequence[str] = (), *, client=relay_client)
     indexers = [u for u in indexers if u]
 
     found = client.query(indexers, [{"kinds": [10002], "authors": [pubkey_hex], "limit": 5}])
+    result.indexers_queried = list(indexers)
     result.indexers_reached = list(found.reached)
     valid = [e for e in found.events if ev.is_valid(e, pubkey=pubkey_hex) and e["kind"] == 10002]
     if valid:

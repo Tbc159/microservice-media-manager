@@ -778,7 +778,8 @@ impedisce.
 Parametri: `?lang=` (default `it` — NIP-F4 non prevede la lingua, quindi non è deducibile dagli
 eventi) e `?relays=wss://a,wss://b` (letti **in aggiunta** a quelli scoperti).
 
-Risposte: `200` `application/rss+xml` con `Cache-Control: public, max-age=300` ed `ETag`;
+Risposte: `200` `application/rss+xml` con `ETag` e `Cache-Control: public, max-age=300` (o
+`max-age=30`/`no-cache` se **parziale**, vedi sotto);
 `304` su `If-None-Match` corrispondente; `400` chiave non valida; `404` nessuna scheda podcast;
 `429` oltre il rate limit.
 
@@ -907,6 +908,30 @@ relay**: per rispondere `304` bisogna comunque conoscere l'ETag corrente, cioè 
 Senza una cache lato server ogni `If-None-Match` aprirebbe una manciata di WebSocket. Per questo
 il corpo generato resta in memoria per `FEED_CACHE_TTL_S` (default 300 s, = il `max-age`) e il
 `304` si risponde da lì.
+
+**Un feed parziale non resta in cache per il TTL pieno.** Visto dal vero subito dopo aver
+pubblicato un episodio: il feed è uscito con il solo episodio nuovo, i quattro precedenti
+"spariti" — stavano su relay che in quel momento non hanno risposto entro il timeout, e il feed
+costruito con quello che era arrivato è rimasto in cache cinque minuti. Quindi:
+
+- un risultato con `reached < queried` è **parziale**: si tiene al massimo
+  `FEED_PARTIAL_CACHE_TTL_S` (default 30 s; `0` = non si mette in cache), e `Cache-Control` lo
+  dice (`max-age=30` o `no-cache` invece di `max-age=300`);
+- il feed parziale **esce comunque**, con lo stesso corpo: meglio pochi episodi che un 503.
+  Cambia solo per quanto lo si tiene;
+- nel commento in testa i relay senza risposta sono segnati — `wss://relay.damus.io (nessuna
+  risposta)` — perché è l'unico modo che il client ha per capire perché un episodio manca;
+- vale anche quando **nessun indicizzatore** risponde: senza NIP-65 abbiamo letto solo i ripieghi,
+  e gli episodi dell'autore potrebbero stare altrove;
+- un relay in **timeout** viene ritentato una volta con timeout doppio (`FEED_RELAY_RETRY=0` lo
+  spegne). Solo il timeout: un rifiuto di connessione o un 503 non migliorano aspettando.
+  Verificato su relay veri con timeout stretto: 3/5 senza retry, 4/5 con.
+
+> **L'ETag è del contenuto, non del documento.** Il commento sui relay cambia fra parziale e
+> completo, ma a parità di eventi l'ETag resta lo stesso: l'hash si calcola sul corpo *senza*
+> quel commento. Così un client con la copia completa che chiede `If-None-Match` mentre noi
+> abbiamo un parziale con gli stessi eventi riceve `304` e si tiene la sua. Per la stessa ragione
+> gli hint di relay nei `nevent` derivano dall'insieme *scoperto*, non da chi ha risposto stavolta.
 
 Perché funzioni, **il corpo dev'essere deterministico**: niente `now()` (il `lastBuildDate` deriva
 dall'evento più recente), relay ordinati, episodi ordinati con `id` come spareggio. E le date RFC

@@ -294,3 +294,94 @@ def test_self_link_uses_the_forwarded_host(client):
         "X-Forwarded-Proto": "https", "X-Forwarded-Host": "pubblico.example",
         "Host": "interno:8080"}).text
     assert _self_link(body).startswith("https://pubblico.example/")
+
+
+# ── feed parziale: un relay lento non deve far sparire episodi per 5 minuti ────
+
+def _partial_client(monkeypatch, fail=("wss://damus.example",), partial_ttl=None, events=None):
+    """Un relay dei ripieghi non risponde. Gli indicizzatori (wss://indice.example) sì."""
+    if partial_ttl is not None:
+        monkeypatch.setenv("FEED_PARTIAL_CACHE_TTL_S", str(partial_ttl))
+    from src.app import create_app
+    import src.domains.feed.controllers.feed_controller as fc
+
+    relays = FakeRelays(ALL_EVENTS if events is None else events, fail=fail)
+    app = create_app(domains=["feed"])
+    fc._service = FeedService(MemoryStore({AUDIO_URL: 51200}), relays=relays)
+    fc._limiter = FixedWindowLimiter(max_requests=1000, window=60)
+    return app.test_client(), relays
+
+
+def test_partial_feed_is_served_marked_and_cached_briefly(monkeypatch):
+    client, _ = _partial_client(monkeypatch)
+    r = client.get(f"/v0/feed/{_npub()}.xml")
+    assert r.status_code == 200                                    # esce comunque, mai un 503
+    assert r.headers["cache-control"] == "public, max-age=30"      # coerente con la cache
+    head = r.text.split("\n")[1]
+    assert head == "<!-- relays: wss://damus.example (nessuna risposta), wss://nos.example -->"
+
+
+def test_partial_feed_with_ttl_zero_is_not_cached_and_regenerates(monkeypatch):
+    client, relays = _partial_client(monkeypatch, partial_ttl=0)
+    r = client.get(f"/v0/feed/{_npub()}.xml")
+    assert r.headers["cache-control"] == "no-cache"
+    calls = len(relays.calls)
+    client.get(f"/v0/feed/{_npub()}.xml")
+    assert len(relays.calls) > calls                               # rigenerato: ha riinterrogato
+
+
+def test_partial_feed_expires_after_the_short_ttl(monkeypatch):
+    monkeypatch.setenv("FEED_PARTIAL_CACHE_TTL_S", "30")
+    relays = FakeRelays(ALL_EVENTS, fail=("wss://damus.example",))
+    svc = FeedService(MemoryStore({AUDIO_URL: 1}), relays=relays)
+    url = "https://x/v0/feed/x.xml"
+    first = svc.build(_npub(), lang="it", extra_relays=[], feed_url=url, now=1000)
+    assert first.partial and first.cache_ttl == 30
+    assert svc.build(_npub(), lang="it", extra_relays=[], feed_url=url, now=1020).cached
+    relays.fail = set()                                            # il relay torna
+    again = svc.build(_npub(), lang="it", extra_relays=[], feed_url=url, now=1031)
+    assert not again.cached and not again.partial and again.cache_ttl == 300
+
+
+def test_complete_feed_keeps_todays_behaviour(client):
+    r = client.get(f"/v0/feed/{_npub()}.xml")
+    assert r.headers["cache-control"] == "public, max-age=300"
+    assert "(nessuna risposta)" not in r.text
+    assert r.headers["etag"] == client.get(f"/v0/feed/{_npub()}.xml").headers["etag"]
+
+
+def test_partial_and_complete_with_same_events_share_the_etag(monkeypatch):
+    """L'ETag e' del contenuto, non della cache: il commento sui relay non entra. Un client con
+    la copia completa che chiede If-None-Match mentre noi abbiamo un parziale con gli stessi
+    eventi deve ricevere 304 e tenersi la sua."""
+    complete = _client().get(f"/v0/feed/{_npub()}.xml")
+    partial, _ = _partial_client(monkeypatch)
+    partial_r = partial.get(f"/v0/feed/{_npub()}.xml")
+    assert complete.text != partial_r.text                         # il commento differisce...
+    assert complete.headers["etag"] == partial_r.headers["etag"]   # ...l'ETag no
+    r304 = partial.get(f"/v0/feed/{_npub()}.xml", headers={"If-None-Match": complete.headers["etag"]})
+    assert r304.status_code == 304
+
+
+def test_partial_with_fewer_events_has_a_different_etag(monkeypatch):
+    """Quando il relay lento e' l'unico ad avere un episodio, il contenuto cambia davvero."""
+    complete = _client().get(f"/v0/feed/{_npub()}.xml").headers["etag"]
+    fewer, _ = _partial_client(monkeypatch, events=[FIXTURES["card"], FIXTURES["profile"]])
+    assert fewer.get(f"/v0/feed/{_npub()}.xml").headers["etag"] != complete
+
+
+def test_404_on_partial_result_says_some_relays_did_not_answer(monkeypatch):
+    client, _ = _partial_client(monkeypatch, events=[FIXTURES["profile"]])
+    r = client.get(f"/v0/feed/{_npub()}.xml")
+    assert r.status_code == 404
+    assert r.json()["unreached"] == ["wss://damus.example"]
+    assert "problema di relay" in r.json()["detail"]
+
+
+def test_unreachable_indexers_make_the_feed_partial(monkeypatch):
+    """Senza indicizzatori non sappiamo quali siano i relay dell'autore: abbiamo letto solo i
+    ripieghi. Vale poco, si tiene poco."""
+    client, _ = _partial_client(monkeypatch, fail=("wss://indice.example",))
+    r = client.get(f"/v0/feed/{_npub()}.xml")
+    assert r.status_code == 200 and r.headers["cache-control"] == "public, max-age=30"
+    assert "indicizzatori NIP-65 (nessuna risposta)" in r.text.split("\n")[1]

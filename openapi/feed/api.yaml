@@ -59,7 +59,9 @@ paths:
         Genera il feed leggendo dai relay gli eventi della chiave:
 
         1. **relay** — lista NIP-65 (kind `10002`) presa dai relay indicizzatori, piu' un elenco
-           fisso di ripiego, piu' quelli di `?relays=`;
+           fisso di ripiego, piu' quelli di `?relays=`. Un relay in timeout viene ritentato una
+           volta con timeout doppio; se non risponde comunque il feed esce **parziale** (vedi
+           `200`);
         2. **kind 10154** (scheda del podcast, una sola versione, la piu' recente) — se manca,
            `404`. Non viene inventato un canale a partire dal kind `0`;
         3. **kind 0** — solo per `itunes:author` e `itunes:owner`, se presenti;
@@ -127,7 +129,14 @@ paths:
       responses:
         '200':
           description: |
-            Feed RSS 2.0. `Cache-Control: public, max-age=300` ed `ETag` (hash del corpo).
+            Feed RSS 2.0 con `ETag` (hash del **contenuto**: il commento sui relay non entra).
+
+            `Cache-Control` dice quanto vale la risposta: `public, max-age=300` se **tutti** i
+            relay hanno risposto; `public, max-age=30` (o `no-cache`) se il feed e' **parziale**,
+            cioe' costruito senza la risposta di almeno un relay. Un parziale esce comunque —
+            meglio pochi episodi che un 503 — ma non va tenuto cinque minuti: chi lo verifica in
+            quel momento vedrebbe sparire gli episodi che stanno solo sul relay lento. Nel
+            commento in testa i relay senza risposta sono segnati `(nessuna risposta)`.
           headers:
             Cache-Control:
               schema: {type: string}
@@ -186,5 +195,12 @@ components:
         relays:
           type: array
           description: Relay effettivamente interrogati.
+          items:
+            type: string
+        unreached:
+          type: array
+          description: |
+            Relay interrogati che **non hanno risposto**. Su un 404 e' il caso peggiore: la
+            scheda potrebbe esistere proprio li'. Presente solo se non vuoto.
           items:
             type: string

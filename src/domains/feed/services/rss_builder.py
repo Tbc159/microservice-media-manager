@@ -137,6 +137,24 @@ def duration_seconds(event: dict) -> Optional[int]:
     return int(raw) if raw.isdigit() else None
 
 
+_RELAYS_COMMENT_RE = re.compile(r"^<!-- relays: .*? -->\n", re.M)
+_UNREACHED_MARK = " (nessuna risposta)"
+
+
+def relays_comment(relays: Sequence[str], unreached: Sequence[str] = ()) -> str:
+    """`<!-- relays: wss://a, wss://b (nessuna risposta) -->`. Voci extra in `unreached` che
+    non sono relay (es. "indicizzatori NIP-65") vengono accodate con lo stesso marcatore."""
+    missing = set(unreached)
+    parts = [u + (_UNREACHED_MARK if u in missing else "") for u in relays]
+    parts += [u + _UNREACHED_MARK for u in unreached if u not in set(relays)]
+    return f"<!-- relays: {escape(', '.join(parts))} -->\n"
+
+
+def strip_relays_comment(body: str) -> str:
+    """Il corpo senza il commento diagnostico: e' su questo che si calcola l'ETag."""
+    return _RELAYS_COMMENT_RE.sub("", body, count=1)
+
+
 def _cdata(text: str) -> str:
     """CDATA a prova di `]]>` nel contenuto (chiude la sezione e la riapre)."""
     return "<![CDATA[" + (text or "").replace("]]>", "]]]]><![CDATA[>") + "]]>"
@@ -176,8 +194,10 @@ def build_feed(
     enclosure_lengths: Dict[str, Optional[int]],
     skipped: int = 0,
     episode_relay_hints: Sequence[str] = (),
+    unreached: Sequence[str] = (),
 ) -> str:
-    """Documento RSS completo. `enclosure_lengths`: url -> Content-Length (None se ignoto)."""
+    """Documento RSS completo. `enclosure_lengths`: url -> Content-Length (None se ignoto).
+    `unreached`: relay interrogati che non hanno risposto — segnati nel commento in testa."""
     npub = nip19.hex_to_npub(pubkey_hex)
     title = first_tag_value(card, "title") or npub
     description = first_tag_value(card, "description") or ""
@@ -187,8 +207,9 @@ def build_feed(
 
     out = ['<?xml version="1.0" encoding="UTF-8"?>\n']
     # I relay interrogati in testa: un feed vuoto e' quasi sempre un problema di relay, e
-    # senza questa riga non e' diagnosticabile da chi scarica il feed.
-    out.append(f"<!-- relays: {escape(', '.join(relays))} -->\n")
+    # senza questa riga non e' diagnosticabile da chi scarica il feed. Chi non ha risposto e'
+    # segnato: e' l'unico modo che il client ha per capire perche' un episodio manca.
+    out.append(relays_comment(relays, unreached))
     out.append(
         '<rss version="2.0"\n'
         '     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"\n'

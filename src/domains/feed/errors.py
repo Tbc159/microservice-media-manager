@@ -13,15 +13,21 @@ class NoPodcastCard(Exception):
     posto sbagliato, che e' il caso di gran lunga piu' frequente.
     """
 
-    def __init__(self, relays: List[str]) -> None:
+    def __init__(self, relays: List[str], unreached: List[str] = ()) -> None:
         self.relays = list(relays)
+        self.unreached = list(unreached)
         super().__init__("nessuna scheda podcast (kind 10154)")
 
     def to_body(self) -> dict:
-        return {
+        body = {
             "detail": "nessuna scheda podcast (kind 10154) per questa chiave sui relay interrogati",
             "relays": self.relays,
         }
+        if self.unreached:
+            # Un 404 con relay senza risposta e' il caso peggiore: la scheda potrebbe esserci.
+            body["detail"] += " (alcuni non hanno risposto: potrebbe essere un problema di relay)"
+            body["unreached"] = self.unreached
+        return body
 
 
 class RateLimited(Exception):

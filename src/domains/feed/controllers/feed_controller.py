@@ -16,7 +16,7 @@ import flask
 from src.domains.feed.errors import InvalidKey, NoPodcastCard
 from src.domains.feed.factory import build_feed_service
 from src.domains.feed.nostr import nip19
-from src.domains.feed.services import discovery, feed_service
+from src.domains.feed.services import discovery
 from src.external_url import external_url
 from src.rate_limit import FixedWindowLimiter, client_ip
 
@@ -30,8 +30,11 @@ def _json(payload: dict, status: int) -> flask.Response:
     return flask.Response(json.dumps(payload), status, {"Content-Type": "application/json"})
 
 
-def _cache_headers(etag: str) -> dict:
-    return {"Cache-Control": f"public, max-age={feed_service.cache_ttl_s()}", "ETag": etag}
+def _cache_headers(result) -> dict:
+    # max-age coerente con la cache lato server: 300 per un feed completo, 30 (o no-cache) per
+    # uno costruito senza la risposta di tutti i relay. Un parziale tenuto 5 minuti fa sparire
+    # gli episodi che stanno solo sul relay lento.
+    return {"Cache-Control": result.cache_control, "ETag": result.etag}
 
 
 def _matches(header: str, etag: str) -> bool:
@@ -81,7 +84,7 @@ def get_feed(npub: str, lang: str = "it", relays: str = None):
     except NoPodcastCard as exc:
         return _json(exc.to_body(), 404)
 
-    headers = _cache_headers(result.etag)
+    headers = _cache_headers(result)
     if _matches(flask.request.headers.get("If-None-Match", ""), result.etag):
         return flask.Response(status=304, headers=headers)
     return flask.Response(result.body, 200, {**headers, "Content-Type": _RSS_TYPE})

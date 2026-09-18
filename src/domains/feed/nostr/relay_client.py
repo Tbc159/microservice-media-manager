@@ -6,6 +6,10 @@ questa informazione non e' diagnosticabile.
 
 Un relay lento o irraggiungibile non deve bloccare la risposta: ogni relay ha il proprio
 timeout e i suoi errori vengono assorbiti (il feed si costruisce con quello che e' arrivato).
+Ma un relay che va in **timeout** — non uno che rifiuta la connessione — spesso risponde se gli
+si da' piu' tempo: un secondo tentativo con timeout doppio costa pochi secondi e evita di
+dichiarare "non raggiunto" un relay che tiene gli episodi vecchi. Il chiamante sa comunque
+com'e' andata: `reached < queried` significa risultato **parziale**.
 """
 import asyncio
 import json
@@ -23,6 +27,7 @@ logger = logging.getLogger("feed")
 
 _DEFAULT_TIMEOUT_S = 6.0
 _MAX_EVENTS_PER_RELAY = 500
+_RETRY_TIMEOUT_FACTOR = 2
 
 
 @dataclass
@@ -31,12 +36,27 @@ class RelayQueryResult:
     queried: List[str] = field(default_factory=list)
     reached: List[str] = field(default_factory=list)
 
+    @property
+    def unreached(self) -> List[str]:
+        """Relay interrogati che non hanno risposto: se non e' vuoto il risultato e' PARZIALE."""
+        reached = set(self.reached)
+        return [u for u in self.queried if u not in reached]
+
+    @property
+    def partial(self) -> bool:
+        return bool(self.unreached)
+
 
 def timeout_s() -> float:
     try:
         return float(os.environ.get("FEED_RELAY_TIMEOUT_S", _DEFAULT_TIMEOUT_S))
     except ValueError:
         return _DEFAULT_TIMEOUT_S
+
+
+def retry_on_timeout() -> bool:
+    """Secondo tentativo (timeout doppio) per i relay in timeout. `FEED_RELAY_RETRY=0` lo spegne."""
+    return os.environ.get("FEED_RELAY_RETRY", "1").strip() not in ("0", "false", "no")
 
 
 async def _query_one(url: str, filters: Sequence[dict], timeout: float) -> List[dict]:
@@ -59,16 +79,34 @@ async def _query_one(url: str, filters: Sequence[dict], timeout: float) -> List[
     return events
 
 
-async def _gather(relays: Sequence[str], filters: Sequence[dict], timeout: float) -> RelayQueryResult:
-    result = RelayQueryResult(queried=list(relays))
+async def _query_all(relays: Sequence[str], filters: Sequence[dict], timeout: float) -> dict:
+    """url -> lista eventi, oppure l'eccezione. Tutti in parallelo, nessuno blocca gli altri."""
     outcomes = await asyncio.gather(
         *(asyncio.wait_for(_query_one(url, filters, timeout), timeout + 2) for url in relays),
         return_exceptions=True,
     )
+    return dict(zip(relays, outcomes))
+
+
+async def _gather(relays: Sequence[str], filters: Sequence[dict], timeout: float,
+                  retry: bool = None) -> RelayQueryResult:
+    result = RelayQueryResult(queried=list(relays))
+    outcomes = await _query_all(relays, filters, timeout)
+
+    # Secondo tentativo, solo per chi e' andato in TIMEOUT: un rifiuto di connessione o un
+    # errore di protocollo non cambiano dandogli piu' tempo, un relay lento si'.
+    retry = retry_on_timeout() if retry is None else retry
+    timed_out = [u for u, o in outcomes.items() if isinstance(o, TimeoutError)]
+    if retry and timed_out:
+        logger.info("relay in timeout, secondo tentativo con timeout x%s: %s",
+                    _RETRY_TIMEOUT_FACTOR, timed_out)
+        outcomes.update(await _query_all(timed_out, filters, timeout * _RETRY_TIMEOUT_FACTOR))
+
     seen: Dict[str, dict] = {}
-    for url, outcome in zip(relays, outcomes):
+    for url in relays:
+        outcome = outcomes[url]
         if isinstance(outcome, BaseException):
-            logger.info("relay non utilizzabile %s: %s", url, type(outcome).__name__)
+            logger.warning("relay non raggiunto %s: %s", url, type(outcome).__name__)
             continue
         result.reached.append(url)
         for event in outcome:
