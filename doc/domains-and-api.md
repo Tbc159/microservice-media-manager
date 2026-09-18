@@ -828,10 +828,37 @@ sanificato), `<guid isPermaLink="false">` = id dell'evento, `<pubDate>` RFC 822,
 > che non assomiglia a un URL web — `mailto:`, `javascript:`, testo qualsiasi — viene scartato e
 > si usa il ripiego (`njump.me` per il `<link>`, nessuna immagine).
 
-**Non si inventa**: `<itunes:category>` (non è nell'evento) e `<itunes:duration>` (costerebbe un
-`ffprobe` per episodio — se un giorno servisse, con la stessa cache per URL). Se il 10154 non ha
-`image`, `<itunes:image>` **manca** e il feed lo dichiara in un commento: Apple lo richiede, ma
-l'avatar del kind 0 è l'autore, non la copertina del podcast.
+**Tag oltre NIP-F4 — ciò che le piattaforme pretendono.** Provando il feed contro le piattaforme
+vere: Apple e Amazon rifiutano un feed senza `itunes:category`; Spotify, Amazon e YouTube
+verificano la proprietà mandando un codice all'`itunes:email`; il validatore W3C segnala
+`<itunes:owner>` senza `<itunes:email>` come **errore**. NIP-F4 non prevede nessuno di questi
+dati, quindi il client li scrive con tag semplici e il servizio li legge. Tutti facoltativi;
+senza, il comportamento non cambia.
+
+| evento | tag | diventa |
+|---|---|---|
+| 10154 | `["category", "News", "Daily News"]` — fino a 3, il primo è la primaria | `<itunes:category text="News"><itunes:category text="Daily News"/></itunes:category>`, uno per tag, nell'ordine; `&` scritta `&amp;` nell'attributo |
+| 10154 | `["language", "it"]` (ISO 639-1) | `<language>`: il tag vince su `?lang`, `?lang` vince sul default `it`. Un valore che non è un codice (`"italiano"`) viene ignorato, perché romperebbe l'intero feed |
+| 10154 | `["email", "owner@esempio.tld"]` | `<itunes:owner><itunes:name>…</itunes:name><itunes:email>…</itunes:email></itunes:owner>` |
+| 10154 | `["content-warning", "…"]` (NIP-36, anche vuoto) | `<itunes:explicit>true</itunes:explicit>`; assente → `false` |
+| 54 | `["duration", "3600"]` (secondi interi) | `<itunes:duration>3600</itunes:duration>`; assente o non intero → omesso |
+| 54 | `["content-warning", "…"]` | `<itunes:explicit>true</itunes:explicit>` nell'item; assente → omesso |
+
+> **Senza email, nessun `<itunes:owner>`.** Prima usciva con il solo `<itunes:name>`, e per il
+> validatore W3C è un errore (*Missing itunes:owner element: itunes:email*). Un owner vuoto è
+> peggio di nessun owner.
+
+**Non si inventa**: senza tag `category` nessun `<itunes:category>` (non "Technology" di default),
+senza `duration` nessun `<itunes:duration>` (calcolarla costerebbe un `ffprobe` per episodio).
+I nomi delle categorie sono quelli **esatti** di Apple: la validazione contro l'elenco la fa il
+client prima di pubblicare, il servizio riporta ciò che trova. Se il 10154 non ha `image`,
+`<itunes:image>` **manca** e il feed lo dichiara in un commento: Apple lo richiede, ma l'avatar
+del kind 0 è l'autore, non la copertina del podcast.
+
+Entrambe le fixture — 10154 completo e 10154 spoglio — sono state passate al **validatore W3C
+reale** (`validator.w3.org/feed`): `validity=true`, zero errori. La CI ne verifica le regole
+riproducibili offline (owner con email o assente, `category` solo come attributo, `explicit`
+`true`/`false`, `language` a due lettere).
 
 ### Enclosure: `length` e il perché di una HEAD
 
@@ -844,7 +871,8 @@ commento che lo dice — l'enclosure **non** si omette, perché un item senza en
 episodio per nessun aggregatore.
 
 `url` e `type` vengono dal **primo** tag `audio` con MIME `audio/*`; gli altri diventano
-`<podcast:alternateEnclosure>`. Un episodio senza alcun tag `audio` viene saltato e contato in
+`<podcast:alternateEnclosure>`, con la propria `length` dalla stessa cache (omessa se ignota:
+lì non è obbligatoria). Un episodio senza alcun tag `audio` viene saltato e contato in
 coda: `<!-- saltati: N senza audio -->`.
 
 ### Cache: perché sta anche lato server

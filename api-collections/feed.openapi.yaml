@@ -64,9 +64,22 @@ paths:
         \ contato in un commento in coda (`<!-- saltati: N senza audio -->`). NIP-F4 non\nporta la dimensione\
         \ del file: `length` si ottiene con una `HEAD` sull'URL, memorizzata in\ncache per URL (gli URL\
         \ Blossom sono content-addressed, il valore non cambia). Se la\n`HEAD` non riesce: `length=\"\
-        0\"` e un commento che lo dice — l'enclosure non si omette.\n\n**Non dichiarato**: `itunes:duration`\
-        \ (non e' nell'evento e calcolarla costerebbe un\nffprobe per episodio) e `itunes:category` (non\
-        \ si inventa una categoria).\n"
+        0\"` e un commento che lo dice — l'enclosure non si omette.\n\n**Tag oltre NIP-F4.** Le piattaforme\
+        \ pretendono dati che NIP-F4 non prevede: Apple e\nAmazon rifiutano un feed senza `itunes:category`;\
+        \ Spotify, Amazon e YouTube verificano\nla proprieta' scrivendo all'`itunes:email`; il validatore\
+        \ W3C tratta un `itunes:owner`\nsenza email come errore. Il client li scrive con tag semplici\
+        \ e qui vengono letti — tutti\nfacoltativi, e senza di essi il comportamento non cambia:\n\n|\
+        \ evento | tag | diventa |\n|---|---|---|\n| 10154 | `[\"category\", \"News\", \"Daily News\"\
+        ]` (fino a 3, il primo e' la primaria) | `<itunes:category text=\"News\"><itunes:category text=\"\
+        Daily News\"/></itunes:category>` |\n| 10154 | `[\"language\", \"it\"]` (ISO 639-1) | `<language>`\
+        \ — vince su `?lang`, che vince sul default |\n| 10154 | `[\"email\", \"owner@esempio.tld\"]`\
+        \ | `<itunes:owner>` con `itunes:name` e `itunes:email`; **senza email nessun owner** |\n| 10154\
+        \ | `[\"content-warning\", \"...\"]` (NIP-36, anche vuoto) | `<itunes:explicit>true</itunes:explicit>`\
+        \ |\n| 54 | `[\"duration\", \"3600\"]` (secondi interi) | `<itunes:duration>` |\n| 54 | `[\"content-warning\"\
+        , \"...\"]` | `<itunes:explicit>true</itunes:explicit>` nell'item |\n\nI nomi delle categorie\
+        \ sono quelli **esatti** di Apple, `&` compresa: la validazione\ncontro l'elenco la fa il client\
+        \ prima di pubblicare, il servizio riporta cio' che trova.\n**Non si inventa**: senza tag `category`\
+        \ nessun `itunes:category`, senza `email` nessun\n`itunes:owner`, senza `duration` nessun `itunes:duration`.\n"
       parameters:
       - name: npub
         in: path

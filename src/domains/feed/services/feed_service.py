@@ -124,8 +124,10 @@ class FeedService:
         playable = [e for e in episodes if rss_builder.audio_tags(e)]
         skipped = len(episodes) - len(playable)
 
+        # Tutti gli URL audio, non solo il primo: anche gli alternateEnclosure portano length.
         lengths = enclosure_probe.lengths_for(
-            (rss_builder.audio_tags(e)[0][0] for e in playable), self._store, client=self._http
+            (url for e in playable for url, _ in rss_builder.audio_tags(e)),
+            self._store, client=self._http,
         )
         body = rss_builder.build_feed(
             card=card,

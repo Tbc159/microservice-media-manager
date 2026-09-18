@@ -9,8 +9,23 @@ Due vincoli guidano il codice piu' di quanto sembri:
    con `LANG=it_IT` produrrebbe "Sab, 13 Set" e i validatori lo rifiutano. I nomi sono scritti
    a mano.
 
-Cio' che non si sa non si inventa: niente `<itunes:category>`, niente `<itunes:duration>`.
+Cio' che non si sa non si inventa: niente `<itunes:category>`, niente `<itunes:duration>`,
+niente `<itunes:owner>` senza email — a meno che l'evento non li dichiari.
+
+**Tag oltre NIP-F4.** Le piattaforme pretendono dati che NIP-F4 non prevede: Apple e Amazon
+rifiutano un feed senza `itunes:category`; Spotify, Amazon e YouTube verificano la proprieta'
+mandando un codice all'`itunes:email`; il validatore W3C tratta un `<itunes:owner>` senza
+`<itunes:email>` come errore. Il client li scrive nel 10154 e nel 54 con tag semplici, e qui
+si leggono — tutti facoltativi, e senza di essi il comportamento non cambia:
+
+  10154  ["category", "News", "Daily News"]  fino a 3, il primo e' la primaria (nomi Apple)
+         ["language", "it"]                  ISO 639-1: vince su ?lang, che vince sul default
+         ["email", "owner@esempio.tld"]      itunes:owner esiste SOLO se c'e' questo
+         ["content-warning", ...]            NIP-36: la presenza (anche vuoto) = explicit
+  54     ["duration", "3600"]                secondi interi -> itunes:duration
+         ["content-warning", ...]            explicit del singolo episodio
 """
+import re
 import uuid
 from typing import Dict, List, Optional, Sequence
 from urllib.parse import urlparse
@@ -18,6 +33,9 @@ from xml.sax.saxutils import escape, quoteattr
 
 from src.domains.feed.nostr import nip19
 from src.domains.feed.nostr.events import first_tag_value, tag_values
+
+_MAX_CATEGORIES = 3
+_LANG_RE = re.compile(r"^[a-zA-Z]{2}(-[a-zA-Z]{2,8})?$")
 
 # Namespace di Podcasting 2.0 per <podcast:guid>: e' cosi' che Podcast Index deduplica i feed.
 PODCAST_NAMESPACE = uuid.UUID("ead4c236-bf58-58c6-a2c6-a6b28d128cb6")
@@ -78,6 +96,45 @@ def absolute_url(value: Optional[str]) -> Optional[str]:
     if "." not in host or " " in host:     # non assomiglia a un host
         return None
     return f"https://{value}"
+
+
+def categories(card: dict) -> List[Sequence[str]]:
+    """`[(principale, sotto|None), ...]` dai tag `category`, nell'ordine, al massimo 3.
+
+    I nomi sono quelli **esatti** di Apple, `&` compresa e non escapata: la validazione contro
+    l'elenco la fa il client prima di pubblicare, qui si riporta quello che si trova.
+    """
+    out: List[Sequence[str]] = []
+    for values in tag_values(card, "category"):
+        main = (values[0] if values else "").strip()
+        if not main:
+            continue
+        sub = values[1].strip() if len(values) > 1 and values[1] and values[1].strip() else None
+        out.append((main, sub))
+        if len(out) >= _MAX_CATEGORIES:
+            break
+    return out
+
+
+def language(card: dict, requested: str) -> str:
+    """Il tag `language` del 10154 vince su `?lang`; `?lang` vince sul default.
+
+    Un valore che non e' un codice lingua (`"italiano"`) romperebbe l'intero feed per i
+    validatori: si ignora e si ricade su `requested`.
+    """
+    declared = (first_tag_value(card, "language") or "").strip()
+    return declared.lower() if _LANG_RE.match(declared) else requested
+
+
+def is_explicit(event: dict) -> bool:
+    """NIP-36: la **presenza** del tag `content-warning`, anche vuoto, marca il contenuto."""
+    return bool(tag_values(event, "content-warning"))
+
+
+def duration_seconds(event: dict) -> Optional[int]:
+    """Secondi interi dal tag `duration`, o None se assente o non intero."""
+    raw = (first_tag_value(event, "duration") or "").strip()
+    return int(raw) if raw.isdigit() else None
 
 
 def _cdata(text: str) -> str:
@@ -143,7 +200,7 @@ def build_feed(
     out.append(_tag("title", title))
     out.append(_tag("description", description))
     out.append(_tag("link", website))
-    out.append(_tag("language", lang))
+    out.append(_tag("language", language(card, lang)))
     out.append(f"    <generator>{escape(GENERATOR)}</generator>\n")
     out.append(f'    <atom:link href={quoteattr(feed_url)} rel="self" '
                'type="application/rss+xml"/>\n')
@@ -164,13 +221,25 @@ def build_feed(
         # (aggiungendo un tag `image` al proprio kind 10154).
         out.append("    <!-- image assente nel kind 10154: Apple richiede itunes:image -->\n")
     out.append(_tag("itunes:author", author))
-    if author:
+    email = (first_tag_value(card, "email") or "").strip()
+    if email:
+        # itunes:owner esiste SOLO con l'email: e' l'indirizzo a cui Spotify/Amazon/YouTube
+        # mandano il codice di verifica della proprieta', e per il validatore W3C un owner
+        # senza email e' un errore. Un owner vuoto e' peggio di nessun owner.
         out.append("    <itunes:owner>\n"
                    f"      <itunes:name>{escape(author)}</itunes:name>\n"
+                   f"      <itunes:email>{escape(email)}</itunes:email>\n"
                    "    </itunes:owner>\n")
-    # NIP-F4 non ha un campo "explicit": dichiarare false e' l'unica scelta onesta, ma il tag
-    # e' obbligatorio per Apple quindi non si puo' omettere.
-    out.append("    <itunes:explicit>false</itunes:explicit>\n")
+    for main, sub_category in categories(card):
+        # quoteattr scrive la & come &amp; nell'attributo: "Kids & Family" resta il nome Apple.
+        if sub_category:
+            out.append(f"    <itunes:category text={quoteattr(main)}>\n"
+                       f"      <itunes:category text={quoteattr(sub_category)}/>\n"
+                       "    </itunes:category>\n")
+        else:
+            out.append(f"    <itunes:category text={quoteattr(main)}/>\n")
+    # Obbligatorio per Apple: senza content-warning (NIP-36) e' false, l'unica scelta onesta.
+    out.append(f"    <itunes:explicit>{'true' if is_explicit(card) else 'false'}</itunes:explicit>\n")
     if episodes:
         out.append(_tag("lastBuildDate", rfc822(max(e["created_at"] for e in episodes))))
 
@@ -216,8 +285,15 @@ def _item(event: dict, pubkey_hex: str, lengths: Dict[str, Optional[int]],
         out.append("      <!-- length sconosciuto: HEAD sull'URL non riuscita -->\n")
     out.append(f'      <enclosure url={quoteattr(url)} type={quoteattr(mime)} '
                f'length="{length if length is not None else 0}"/>\n')
+    seconds = duration_seconds(event)
+    if seconds is not None:
+        out.append(f"      <itunes:duration>{seconds}</itunes:duration>\n")
+    if is_explicit(event):
+        out.append("      <itunes:explicit>true</itunes:explicit>\n")
     for alt_url, alt_mime in audio_tags(event)[1:]:
-        out.append(f"      <podcast:alternateEnclosure type={quoteattr(alt_mime)}>\n"
+        alt_length = lengths.get(alt_url)
+        length_attr = f' length="{alt_length}"' if alt_length is not None else ""
+        out.append(f"      <podcast:alternateEnclosure type={quoteattr(alt_mime)}{length_attr}>\n"
                    f"        <podcast:source uri={quoteattr(alt_url)}/>\n"
                    "      </podcast:alternateEnclosure>\n")
     out.append("    </item>\n")

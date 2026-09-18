@@ -20,6 +20,7 @@ warnings.filterwarnings("ignore")
 FIXTURES = json.load(open("tests/fixtures/feed_events.json"))
 PK = FIXTURES["pubkey"]
 ALL_EVENTS = [FIXTURES["card"], FIXTURES["profile"], FIXTURES["ep1"], FIXTURES["ep_no_audio"]]
+BARE_EVENTS = [FIXTURES["card_bare"], FIXTURES["profile"], FIXTURES["ep2"]]
 AUDIO_URL = "https://blossom.example.org/aaaa.mp3"
 ITUNES = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
 
@@ -78,9 +79,9 @@ def test_feed_has_the_tags_apple_requires(client):
     channel = ET.fromstring(client.get(f"/v0/feed/{_npub()}.xml").text).find("channel")
     assert channel.findtext("title") == "Radio Satoshi"
     assert channel.findtext("description")
-    assert channel.findtext("language") == "it"
+    assert channel.findtext("language") == "en"        # il tag language del 10154 vince
     assert channel.find(f"{ITUNES}image").get("href")
-    assert channel.findtext(f"{ITUNES}explicit") == "false"
+    assert channel.findtext(f"{ITUNES}explicit") == "true"   # content-warning nel 10154
     enclosure = channel.find("item/enclosure")
     assert enclosure.get("url") == AUDIO_URL and enclosure.get("length") == "51200"
 
@@ -101,9 +102,20 @@ def test_extra_relays_are_added_to_the_discovered_ones(client):
     assert "wss://extra.example" in body.split("\n")[1]
 
 
-def test_lang_changes_only_the_declared_language(client):
+def test_lang_changes_only_the_declared_language():
+    client = _client(BARE_EVENTS)          # senza tag language: decide ?lang, poi il default
     assert "<language>en</language>" in client.get(f"/v0/feed/{_npub()}.xml?lang=en").text
     assert "<language>it</language>" in client.get(f"/v0/feed/{_npub()}.xml").text
+
+
+def test_language_tag_in_the_card_wins_over_lang_param(client):
+    assert "<language>en</language>" in client.get(f"/v0/feed/{_npub()}.xml?lang=de").text
+
+
+def test_alternate_enclosure_length_comes_from_the_same_cache():
+    client = _client(lengths={AUDIO_URL: 51200, "https://blossom.example.org/aaaa.m4a": 40960})
+    body = client.get(f"/v0/feed/{_npub()}.xml").text
+    assert 'length="51200"' in body and '<podcast:alternateEnclosure type="audio/mp4" length="40960">' in body
 
 
 def test_hex_and_npub_yield_the_same_canonical_feed(client):
