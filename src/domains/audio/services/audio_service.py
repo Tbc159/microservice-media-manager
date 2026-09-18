@@ -44,6 +44,29 @@ class AudioService:
             raise FormatNotSupported(fmt, field=field, accepted=fp.OUTPUT_FORMATS)
         return fmt
 
+    _COVER_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
+
+    def _resolve_cover(self, ref):
+        """`cover` (MediaRef a un'immagine in archivio) -> {id, media_type}, o None se assente.
+        Risolto qui, al submit: un riferimento sbagliato deve essere un 400 subito, non un job
+        fallito dopo la codifica."""
+        if ref is None:
+            return None
+        rec = self._resolve(ref, "cover")
+        if rec.get("media_type") not in self._COVER_TYPES:
+            raise FormatNotSupported(rec.get("media_type"), field="cover", accepted=self._COVER_TYPES)
+        return {"id": rec["id"], "media_type": rec["media_type"]}
+
+    def _encoding_params(self, body: dict) -> dict:
+        """Campi comuni a normalize/silence/convert: cio' che finisce NEL file, non nel feed —
+        bitrate costante e tag ID3 (titolo, show, copertina)."""
+        return {
+            "title": body.get("title"),
+            "bitrate_kbps": fp.clamp_bitrate(body.get("bitrate_kbps")),
+            "show_title": body.get("show_title"),
+            "cover": self._resolve_cover(body.get("cover")),
+        }
+
     # ── submit delle operazioni ────────────────────────────────────────────────
 
     def _submit(self, op: str, inputs: list[dict], params: dict) -> dict:
@@ -65,7 +88,7 @@ class AudioService:
             "true_peak_dbtp": body.get("true_peak_dbtp", -1.5),
             "loudness_range": body.get("loudness_range", 11),
             "two_pass": bool(body.get("two_pass", False)),
-            "title": body.get("title"),
+            **self._encoding_params(body),
         })
 
     def silence(self, body: dict) -> dict:
@@ -76,13 +99,13 @@ class AudioService:
             "threshold_db": body.get("threshold_db", -40),
             "min_pause_s": body.get("min_pause_s", 1.0),
             "keep_silence_s": body.get("keep_silence_s", 0.3),
-            "title": body.get("title"),
+            **self._encoding_params(body),
         })
 
     def convert(self, body: dict) -> dict:
         src = self._resolve_audio(body["source"], "source")
         fmt = self._require_output(body["format"])
-        return self._submit("convert", [src], {"format": fmt, "title": body.get("title")})
+        return self._submit("convert", [src], {"format": fmt, **self._encoding_params(body)})
 
     def analyze(self, body: dict) -> dict:
         src = self._resolve_audio(body["source"], "source")

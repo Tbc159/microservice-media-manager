@@ -685,6 +685,31 @@ A `succeeded`, `result.media[]` elenca `{ id, media_type, content_url, download_
 - **Limite dichiarato**: due voci sovrapposte nello stesso canale non si separano; con tracce
   separate per parlante, normalizzarle prima del mix e' meglio.
 
+### Il file mp3 esce pronto per i lettori (CBR + ID3v2.3)
+
+Bitrate e tag ID3 vivono **nel file**, non nel feed: l'RSS dichiara solo il MIME dell'enclosure.
+Quindi è questo dominio — che i file li produce — a doverli mettere. Vale per `normalize`,
+`silence` e `convert`; i file caricati direttamente dall'utente non passano di qui e non si toccano.
+
+**Bitrate costante.** Per `audio/mpeg` la codifica è `-b:a <kbps>k`, **mai** `-q:a`/VBR: molti
+lettori di podcast stimano la durata dal bitrate del primo frame, e con un VBR la barra di
+avanzamento sbaglia e la durata mostrata non è quella reale. `bitrate_kbps` è un parametro del job
+(default **128**, ammessi 64–320; vale anche per `audio/m4a`, ignorato per `wav`). Il test e2e
+non verifica una media: legge **ogni** frame MPEG e pretende che siano tutti a 128.
+
+**Tag ID3v2.3** — non v2.4: è quello che tutti leggono. Scritti in una seconda passata con
+`-c copy` (nessuna ricodifica), solo se il campo c'è — mai "Unknown":
+
+| tag | da | note |
+|---|---|---|
+| `TIT2` (titolo) | `title` del job | solo se indicato |
+| `TPE1` (artista), `TALB` (album) | `show_title` | è così che i lettori raggruppano gli episodi |
+| `APIC` (copertina) | `cover` (MediaRef a un'immagine in archivio) | ridotta a **1400×1400 JPEG**, ritaglio centrato; risolta al **submit** → riferimento sbagliato = `400` subito, non un job fallito dopo la codifica |
+| `TLEN` (durata ms) | misurata sul risultato | sempre; letta da ffmpeg stesso (`-f null -`), niente dipendenza da `ffprobe` |
+
+Con ffmpeg: `-id3v2_version 3 -metadata title=… -metadata artist=… -metadata album=…`, e la
+copertina come secondo input con `-map 1:v -disposition:v:0 attached_pic`.
+
 ### Contratto errori & formati
 - Formati input accettati: `audio/m4a`, `audio/mpeg` (`audio/mp3` alias), `audio/wav`. Output:
   `audio/mpeg`|`audio/m4a`|`audio/wav`. Dichiarati nell'OAS **per operazione**.

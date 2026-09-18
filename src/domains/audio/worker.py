@@ -74,7 +74,8 @@ class Worker:
             if op in ("normalize", "silence", "convert"):
                 out = os.path.join(work, output_filename(stem, op, fp.ext_for(fmt), token))
                 self._run_op(op, in_paths[0], out, params)
-                return {"media": [self._upload(out, fmt, os.path.basename(out), title, stem, op)]}
+                final = self._tag_mp3(out, params, work) if fmt == "audio/mpeg" else out
+                return {"media": [self._upload(final, fmt, os.path.basename(out), title, stem, op)]}
 
             if op == "split":
                 parts = fp.run_split(in_paths[0], work, f"{token}-part",
@@ -93,20 +94,47 @@ class Worker:
             raise ValueError(f"operazione sconosciuta: {op}")
 
     def _run_op(self, op, inp, out, params) -> None:
+        kbps = params.get("bitrate_kbps")
         if op == "normalize":
             fp.run_normalize(
                 inp, out, maxgain=params["maxgain"], target_lufs=params["target_lufs"],
                 true_peak=params["true_peak_dbtp"], lra=params["loudness_range"],
-                two_pass=params["two_pass"], out_fmt=params["format"],
+                two_pass=params["two_pass"], out_fmt=params["format"], bitrate_kbps=kbps,
             )
         elif op == "silence":
             fp.run_silence(
                 inp, out, threshold_db=params["threshold_db"],
                 min_pause_s=params["min_pause_s"], keep_silence_s=params["keep_silence_s"],
-                out_fmt=params["format"],
+                out_fmt=params["format"], bitrate_kbps=kbps,
             )
         elif op == "convert":
-            fp.run_convert(inp, out, out_fmt=params["format"])
+            fp.run_convert(inp, out, out_fmt=params["format"], bitrate_kbps=kbps)
+
+    def _tag_mp3(self, path, params, work) -> str:
+        """Tag ID3v2.3 nel file mp3 prodotto: e' li' che i lettori li leggono, non nel feed.
+
+        TIT2 dal `title` del job, TPE1/TALB da `show_title`, APIC dalla `cover` (JPEG
+        1400x1400), TLEN misurata sul risultato. Un campo assente = tag assente, mai "Unknown".
+        Restituisce il path del file taggato (stream audio copiato, nessuna ricodifica).
+        """
+        cover_path = None
+        cover = params.get("cover")
+        if cover:
+            data = self._gw.get_bytes(cover["id"])
+            if data is None:
+                raise RefNotResolved(cover["id"], field="cover", searched_by="id")
+            cover_path = os.path.join(work, "cover.jpg")
+            fp.prepare_cover(data, cover_path)
+        duration = fp.probe_duration_s(path)
+        show = params.get("show_title")
+        tagged = os.path.join(work, "tagged-" + os.path.basename(path))
+        fp.write_id3(
+            path, tagged,
+            title=params.get("title"), artist=show, album=show,
+            duration_ms=round(duration * 1000) if duration is not None else None,
+            cover_path=cover_path,
+        )
+        return tagged
 
     def _run_analyze(self, inp_meta, path, params) -> dict:
         media_id = inp_meta["id"]

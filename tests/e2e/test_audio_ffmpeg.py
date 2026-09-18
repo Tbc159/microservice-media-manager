@@ -8,9 +8,13 @@ Coprono i punti di "come si verifica" del prompt:
   4. un m4a e un wav attraversano `silence` senza conversioni preliminari a carico del chiamante.
 La persistenza al riavvio (5) e' nel test del job store.
 """
+import io as _io
 import re
+import struct as _struct
 import subprocess
 import tempfile
+
+from PIL import Image as _Image
 
 import pytest
 
@@ -18,6 +22,7 @@ imageio_ffmpeg = pytest.importorskip("imageio_ffmpeg")
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 
 from src.domains.audio.gateway import UploadResult  # noqa: E402
+from src.domains.audio.processors import ffmpeg_processor as fp  # noqa: E402
 from src.domains.audio.repositories.job_store import JobStore  # noqa: E402
 from src.domains.audio.services.audio_service import AudioService  # noqa: E402
 from src.domains.audio.worker import Worker  # noqa: E402
@@ -178,3 +183,106 @@ def test_analyze_and_cache_reuse(stack, tmp_path):
     assert an["media_id"] == sid
     assert an["integrated_lufs"] is not None and an["noise_floor_lufs"] is not None
     assert len(an["silences"]) == 2
+
+
+# ── mp3 pronto per i lettori: CBR 128 kbps + ID3v2.3 (con ffmpeg reale) ─────────
+
+def _read_id3(path):
+    """Lettore ID3v2 minimale: (versione major, {frame_id: payload}). Serve perche' il binario
+    statico non ha ffprobe; e' l'equivalente di `ffprobe -show_format` per i tag."""
+    with open(path, "rb") as fh:
+        head = fh.read(10)
+        assert head[:3] == b"ID3", "nessun tag ID3v2 in testa"
+        size = ((head[6] & 0x7F) << 21) | ((head[7] & 0x7F) << 14) | ((head[8] & 0x7F) << 7) | (head[9] & 0x7F)
+        body = fh.read(size)
+    frames, i = {}, 0
+    while i + 10 <= len(body) and body[i:i + 4] != b"\x00\x00\x00\x00":
+        fid = body[i:i + 4].decode()
+        flen = _struct.unpack(">I", body[i + 4:i + 8])[0]        # v2.3: dimensione non syncsafe
+        frames[fid] = body[i + 10:i + 10 + flen]
+        i += 10 + flen
+    return head[3], frames
+
+
+def _text(frame: bytes) -> str:
+    enc = frame[0]
+    return frame[1:].decode("utf-16" if enc in (1, 2) else "latin-1").rstrip("\x00")
+
+
+def _mpeg_bitrates(path):
+    """Bitrate di OGNI frame MPEG dopo il tag ID3 (equivalente di `ffprobe -show_format bit_rate`
+    ma piu' severo: verifica che sia costante, non solo la media)."""
+    d = open(path, "rb").read()
+    size = ((d[6] & 0x7F) << 21) | ((d[7] & 0x7F) << 14) | ((d[8] & 0x7F) << 7) | (d[9] & 0x7F)
+    i = 10 + size
+    BR = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320]
+    SR = [44100, 48000, 32000, 0]
+    rates = []
+    while i + 4 <= len(d):
+        if not (d[i] == 0xFF and (d[i + 1] & 0xE0) == 0xE0):
+            i += 1
+            continue
+        br, sr, pad = BR[d[i + 2] >> 4], SR[(d[i + 2] >> 2) & 3], (d[i + 2] >> 1) & 1
+        if not br or not sr:
+            i += 1
+            continue
+        rates.append(br)
+        i += 144 * br * 1000 // sr + pad
+    return rates
+
+
+def _cover_png(size=(600, 400)) -> bytes:
+    buf = _io.BytesIO()
+    _Image.new("RGB", size, (200, 80, 20)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_mp3_has_cbr_128_and_id3v23_tags_with_cover(stack):
+    gw, svc, worker = stack
+    with tempfile.TemporaryDirectory() as d:
+        sid = gw.add("ep.wav", "audio/wav", _two_speaker_wav(d))
+        source_s = fp.probe_duration_s(f"{d}/two.wav")           # 4 x (6+2+6+2) = 64 s
+    cid = gw.add("cover.png", "image/png", _cover_png())
+    job = _run(svc, worker, svc.normalize({
+        "source": sid, "format": "audio/mpeg", "title": "Puntata 42",
+        "show_title": "Radio Satoshi", "cover": cid,
+    }))
+    assert job["status"] == "succeeded", job.get("error")
+    data = gw.media[job["result"]["media"][0]["id"]]["data"]
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as fh:
+        fh.write(data)
+        path = fh.name
+
+    # bitrate: 128 kbps su OGNI frame (CBR), non una media
+    rates = _mpeg_bitrates(path)
+    assert rates and set(rates) == {128}, f"bitrate non costante: {sorted(set(rates))}"
+
+    major, frames = _read_id3(path)
+    assert major == 3                                             # ID3v2.3, non 2.4
+    assert _text(frames["TIT2"]) == "Puntata 42"
+    assert _text(frames["TPE1"]) == "Radio Satoshi"
+    assert _text(frames["TALB"]) == "Radio Satoshi"
+    tlen_ms = int(_text(frames["TLEN"]))
+    assert abs(tlen_ms - source_s * 1000) < 1500                  # normalize non cambia la durata
+    apic = frames["APIC"]
+    assert b"image/jpeg" in apic[:20]
+    jpeg = apic[apic.index(b"\xff\xd8"):]                         # SOI marker del JPEG
+    assert _Image.open(_io.BytesIO(jpeg)).size == (1400, 1400)   # ridotta e quadrata
+
+
+def test_mp3_without_show_title_has_no_artist_album(stack):
+    gw, svc, worker = stack
+    with tempfile.TemporaryDirectory() as d:
+        sid = gw.add("ep.wav", "audio/wav", _two_speaker_wav(d))
+    job = _run(svc, worker, svc.convert({"source": sid, "format": "audio/mpeg",
+                                         "bitrate_kbps": 192}))
+    assert job["status"] == "succeeded", job.get("error")
+    data = gw.media[job["result"]["media"][0]["id"]]["data"]
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as fh:
+        fh.write(data)
+        path = fh.name
+    _, frames = _read_id3(path)
+    assert "TPE1" not in frames and "TALB" not in frames and "APIC" not in frames
+    assert "TIT2" not in frames                                   # nessun title nel job
+    assert "TLEN" in frames                                       # la durata si misura sempre
+    assert set(_mpeg_bitrates(path)) == {192}                     # bitrate parametrico

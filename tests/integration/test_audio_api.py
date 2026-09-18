@@ -106,3 +106,20 @@ def test_non_audio_input_is_400_format(client):
 
 def test_unknown_job_404(client):
     assert client.get("/v0/audio/job/nope-123", headers=_KEY).status_code == 404
+
+
+def test_cover_must_resolve_and_be_an_image(client):
+    r = client.post("/v0/audio/normalize", json={"source": 7, "cover": 999}, headers=_KEY)
+    assert r.status_code == 400 and r.json()["field"] == "cover"
+    r = client.post("/v0/audio/normalize", json={"source": 7, "cover": 7}, headers=_KEY)  # audio
+    assert r.status_code == 400 and r.json()["field"] == "cover"
+    r = client.post("/v0/audio/normalize", json={"source": 7, "cover": 8,
+                                                 "show_title": "Radio", "bitrate_kbps": 192},
+                    headers=_KEY)
+    assert r.status_code == 202
+
+
+def test_bitrate_out_of_range_is_rejected_by_the_contract(client):
+    r = client.post("/v0/audio/convert", json={"source": 7, "format": "audio/mpeg",
+                                               "bitrate_kbps": 32}, headers=_KEY)
+    assert r.status_code in (400, 422)
