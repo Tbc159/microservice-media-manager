@@ -455,6 +455,23 @@ nel 10154 e nel 54 con tag semplici, e il servizio ora li legge.
   niente durata. Fixture con un 10154 completo e uno spoglio: entrambi `validity=true`, 0 errori
   sul validatore W3C reale.
 
+## 29. Feed: un relay lento non fa sparire episodi per 5 minuti (2026-09-18)
+
+Visto dal vero subito dopo aver pubblicato un episodio: il feed e' uscito col solo episodio
+nuovo, i quattro precedenti spariti. Stavano su relay che non hanno risposto entro il timeout, e
+il feed costruito con quello che era arrivato e' rimasto in cache per il TTL pieno.
+
+- **Parziale = `reached < queried`**: si tiene al massimo `FEED_PARTIAL_CACHE_TTL_S` (default
+  30 s, 0 = mai) e `Cache-Control` lo dice (`max-age=30`/`no-cache` invece di 300). Esce comunque,
+  stesso corpo: meglio pochi episodi che un 503. Vale anche se nessun indicizzatore NIP-65 risponde.
+- Nel commento `<!-- relays: ... -->` chi non ha risposto e' segnato `(nessuna risposta)`; il 404
+  su risultato parziale porta `unreached` e lo dice nel `detail`.
+- **ETag del contenuto, non del documento**: si calcola sul corpo senza il commento sui relay,
+  cosi' parziale e completo con gli stessi eventi hanno lo stesso ETag e un client con la copia
+  completa riceve `304`. Gli hint di relay nei `nevent` restano quelli dell'insieme scoperto.
+- **Retry sui timeout**: un relay in timeout viene ritentato con timeout doppio; un rifiuto di
+  connessione o un 503 no. Su relay veri con timeout stretto: 3/5 senza retry, 4/5 con.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

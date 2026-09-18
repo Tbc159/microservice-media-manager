@@ -455,3 +455,75 @@ def test_complete_and_bare_cards_both_satisfy_the_w3c_rules():
 def test_etag_body_is_stable_with_the_new_tags():
     assert _build(episodes=[EP1, EP2], enclosure_lengths=LENGTHS) == \
         _build(episodes=[EP1, EP2], enclosure_lengths=LENGTHS)
+
+
+# ── feed parziale: commento, ETag del contenuto, retry del client relay ────────
+
+def test_relays_comment_marks_the_unreached():
+    c = rss_builder.relays_comment(["wss://a", "wss://b", "wss://c"], unreached=["wss://b"])
+    assert c == "<!-- relays: wss://a, wss://b (nessuna risposta), wss://c -->\n"
+    # voci che non sono relay (indicizzatori) vengono accodate con lo stesso marcatore
+    c2 = rss_builder.relays_comment(["wss://a"], unreached=["indicizzatori NIP-65"])
+    assert c2 == "<!-- relays: wss://a, indicizzatori NIP-65 (nessuna risposta) -->\n"
+
+
+def test_strip_relays_comment_removes_only_that_line():
+    body = _build(relays=["wss://a"], unreached=["wss://a"])
+    stripped = rss_builder.strip_relays_comment(body)
+    assert "<!-- relays:" not in stripped
+    assert stripped.startswith('<?xml version="1.0" encoding="UTF-8"?>\n<rss')
+    # e' idempotente e non tocca il resto (es. il commento "saltati")
+    assert rss_builder.strip_relays_comment(stripped) == stripped
+    assert "saltati" in rss_builder.strip_relays_comment(_build(skipped=2))
+
+
+def test_partial_and_complete_bodies_differ_only_in_the_comment():
+    complete = _build(relays=["wss://a", "wss://b"])
+    partial = _build(relays=["wss://a", "wss://b"], unreached=["wss://b"])
+    assert complete != partial
+    assert rss_builder.strip_relays_comment(complete) == rss_builder.strip_relays_comment(partial)
+
+
+def test_relay_query_result_reports_partial():
+    from src.domains.feed.nostr.relay_client import RelayQueryResult
+
+    r = RelayQueryResult(queried=["wss://a", "wss://b"], reached=["wss://a"])
+    assert r.partial and r.unreached == ["wss://b"]
+    assert not RelayQueryResult(queried=["wss://a"], reached=["wss://a"]).partial
+
+
+def test_gather_retries_timed_out_relays_with_double_timeout(monkeypatch):
+    """Solo chi va in TIMEOUT viene ritentato, con timeout doppio; un rifiuto di connessione no."""
+    import asyncio
+
+    from src.domains.feed.nostr import relay_client as rc
+
+    calls = []
+
+    async def fake_query_one(url, filters, timeout):
+        calls.append((url, timeout))
+        if url == "wss://lento" and timeout < 10:
+            raise TimeoutError("lento")
+        if url == "wss://rifiuta":
+            raise ConnectionRefusedError()
+        return [{"id": f"ev-{url}", "kind": 54}]
+
+    monkeypatch.setattr(rc, "_query_one", fake_query_one)
+    result = asyncio.run(rc._gather(["wss://ok", "wss://lento", "wss://rifiuta"], [{}], 6.0, retry=True))
+    assert sorted(result.reached) == ["wss://lento", "wss://ok"]       # il lento ce l'ha fatta
+    assert result.unreached == ["wss://rifiuta"]
+    assert ("wss://lento", 12.0) in calls                                # secondo tentativo x2
+    assert [u for u, t in calls if t == 12.0] == ["wss://lento"]        # solo lui
+
+
+def test_gather_without_retry_marks_timeouts_unreached(monkeypatch):
+    import asyncio
+
+    from src.domains.feed.nostr import relay_client as rc
+
+    async def fake_query_one(url, filters, timeout):
+        raise TimeoutError()
+
+    monkeypatch.setattr(rc, "_query_one", fake_query_one)
+    result = asyncio.run(rc._gather(["wss://a"], [{}], 1.0, retry=False))
+    assert result.unreached == ["wss://a"] and result.partial

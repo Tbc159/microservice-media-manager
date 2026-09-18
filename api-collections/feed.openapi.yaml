@@ -53,28 +53,29 @@ paths:
       summary: Feed RSS 2.0 del podcast Nostr di una chiave
       description: "Genera il feed leggendo dai relay gli eventi della chiave:\n\n1. **relay** — lista\
         \ NIP-65 (kind `10002`) presa dai relay indicizzatori, piu' un elenco\n   fisso di ripiego, piu'\
-        \ quelli di `?relays=`;\n2. **kind 10154** (scheda del podcast, una sola versione, la piu' recente)\
-        \ — se manca,\n   `404`. Non viene inventato un canale a partire dal kind `0`;\n3. **kind 0**\
-        \ — solo per `itunes:author` e `itunes:owner`, se presenti;\n4. **kind 54** (episodi), ordinati\
-        \ per `created_at` decrescente. Zero episodi -> `200`\n   con il canale e nessun `<item>`: un\
-        \ feed vuoto e' valido.\n\nGli eventi con `id` incoerente o **firma non valida** vengono scartati:\
-        \ il feed accetta\nrelay dal chiamante, quindi non puo' fidarsi di cio' che un relay restituisce.\n\
-        \n**Enclosure**: `url` e `type` vengono dal **primo** tag `audio` con MIME `audio/*`; gli\naltri\
-        \ diventano `podcast:alternateEnclosure`. Un episodio senza alcun tag `audio` viene\nsaltato e\
-        \ contato in un commento in coda (`<!-- saltati: N senza audio -->`). NIP-F4 non\nporta la dimensione\
-        \ del file: `length` si ottiene con una `HEAD` sull'URL, memorizzata in\ncache per URL (gli URL\
-        \ Blossom sono content-addressed, il valore non cambia). Se la\n`HEAD` non riesce: `length=\"\
-        0\"` e un commento che lo dice — l'enclosure non si omette.\n\n**Tag oltre NIP-F4.** Le piattaforme\
-        \ pretendono dati che NIP-F4 non prevede: Apple e\nAmazon rifiutano un feed senza `itunes:category`;\
-        \ Spotify, Amazon e YouTube verificano\nla proprieta' scrivendo all'`itunes:email`; il validatore\
-        \ W3C tratta un `itunes:owner`\nsenza email come errore. Il client li scrive con tag semplici\
-        \ e qui vengono letti — tutti\nfacoltativi, e senza di essi il comportamento non cambia:\n\n|\
-        \ evento | tag | diventa |\n|---|---|---|\n| 10154 | `[\"category\", \"News\", \"Daily News\"\
-        ]` (fino a 3, il primo e' la primaria) | `<itunes:category text=\"News\"><itunes:category text=\"\
-        Daily News\"/></itunes:category>` |\n| 10154 | `[\"language\", \"it\"]` (ISO 639-1) | `<language>`\
-        \ — vince su `?lang`, che vince sul default |\n| 10154 | `[\"email\", \"owner@esempio.tld\"]`\
-        \ | `<itunes:owner>` con `itunes:name` e `itunes:email`; **senza email nessun owner** |\n| 10154\
-        \ | `[\"content-warning\", \"...\"]` (NIP-36, anche vuoto) | `<itunes:explicit>true</itunes:explicit>`\
+        \ quelli di `?relays=`. Un relay in timeout viene ritentato una\n   volta con timeout doppio;\
+        \ se non risponde comunque il feed esce **parziale** (vedi\n   `200`);\n2. **kind 10154** (scheda\
+        \ del podcast, una sola versione, la piu' recente) — se manca,\n   `404`. Non viene inventato\
+        \ un canale a partire dal kind `0`;\n3. **kind 0** — solo per `itunes:author` e `itunes:owner`,\
+        \ se presenti;\n4. **kind 54** (episodi), ordinati per `created_at` decrescente. Zero episodi\
+        \ -> `200`\n   con il canale e nessun `<item>`: un feed vuoto e' valido.\n\nGli eventi con `id`\
+        \ incoerente o **firma non valida** vengono scartati: il feed accetta\nrelay dal chiamante, quindi\
+        \ non puo' fidarsi di cio' che un relay restituisce.\n\n**Enclosure**: `url` e `type` vengono\
+        \ dal **primo** tag `audio` con MIME `audio/*`; gli\naltri diventano `podcast:alternateEnclosure`.\
+        \ Un episodio senza alcun tag `audio` viene\nsaltato e contato in un commento in coda (`<!-- saltati:\
+        \ N senza audio -->`). NIP-F4 non\nporta la dimensione del file: `length` si ottiene con una `HEAD`\
+        \ sull'URL, memorizzata in\ncache per URL (gli URL Blossom sono content-addressed, il valore non\
+        \ cambia). Se la\n`HEAD` non riesce: `length=\"0\"` e un commento che lo dice — l'enclosure non\
+        \ si omette.\n\n**Tag oltre NIP-F4.** Le piattaforme pretendono dati che NIP-F4 non prevede: Apple\
+        \ e\nAmazon rifiutano un feed senza `itunes:category`; Spotify, Amazon e YouTube verificano\n\
+        la proprieta' scrivendo all'`itunes:email`; il validatore W3C tratta un `itunes:owner`\nsenza\
+        \ email come errore. Il client li scrive con tag semplici e qui vengono letti — tutti\nfacoltativi,\
+        \ e senza di essi il comportamento non cambia:\n\n| evento | tag | diventa |\n|---|---|---|\n\
+        | 10154 | `[\"category\", \"News\", \"Daily News\"]` (fino a 3, il primo e' la primaria) | `<itunes:category\
+        \ text=\"News\"><itunes:category text=\"Daily News\"/></itunes:category>` |\n| 10154 | `[\"language\"\
+        , \"it\"]` (ISO 639-1) | `<language>` — vince su `?lang`, che vince sul default |\n| 10154 | `[\"\
+        email\", \"owner@esempio.tld\"]` | `<itunes:owner>` con `itunes:name` e `itunes:email`; **senza\
+        \ email nessun owner** |\n| 10154 | `[\"content-warning\", \"...\"]` (NIP-36, anche vuoto) | `<itunes:explicit>true</itunes:explicit>`\
         \ |\n| 54 | `[\"duration\", \"3600\"]` (secondi interi) | `<itunes:duration>` |\n| 54 | `[\"content-warning\"\
         , \"...\"]` | `<itunes:explicit>true</itunes:explicit>` nell'item |\n\nI nomi delle categorie\
         \ sono quelli **esatti** di Apple, `&` compresa: la validazione\ncontro l'elenco la fa il client\
@@ -117,7 +118,20 @@ paths:
         example: wss://relay.example.com,wss://altro.example.org
       responses:
         '200':
-          description: 'Feed RSS 2.0. `Cache-Control: public, max-age=300` ed `ETag` (hash del corpo).
+          description: 'Feed RSS 2.0 con `ETag` (hash del **contenuto**: il commento sui relay non entra).
+
+
+            `Cache-Control` dice quanto vale la risposta: `public, max-age=300` se **tutti** i
+
+            relay hanno risposto; `public, max-age=30` (o `no-cache`) se il feed e'' **parziale**,
+
+            cioe'' costruito senza la risposta di almeno un relay. Un parziale esce comunque —
+
+            meglio pochi episodi che un 503 — ma non va tenuto cinque minuti: chi lo verifica in
+
+            quel momento vedrebbe sparire gli episodi che stanno solo sul relay lento. Nel
+
+            commento in testa i relay senza risposta sono segnati `(nessuna risposta)`.
 
             '
           headers:
@@ -190,6 +204,16 @@ components:
         relays:
           type: array
           description: Relay effettivamente interrogati.
+          items:
+            type: string
+        unreached:
+          type: array
+          description: 'Relay interrogati che **non hanno risposto**. Su un 404 e'' il caso peggiore:
+            la
+
+            scheda potrebbe esistere proprio li''. Presente solo se non vuoto.
+
+            '
           items:
             type: string
     Health:
