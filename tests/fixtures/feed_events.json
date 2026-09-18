@@ -20,11 +20,58 @@
       [
         "website",
         "https://radiosatoshi.example.org"
+      ],
+      [
+        "category",
+        "News",
+        "Daily News"
+      ],
+      [
+        "category",
+        "Kids & Family"
+      ],
+      [
+        "category",
+        "Technology"
+      ],
+      [
+        "language",
+        "en"
+      ],
+      [
+        "email",
+        "owner@radiosatoshi.example.org"
+      ],
+      [
+        "content-warning",
+        "linguaggio esplicito"
       ]
     ],
     "content": "",
-    "id": "3fe3ddacf0a75a124c0342f93703b31805cbc8ffe42e387f96d465b8046493d3",
-    "sig": "ee53649a9bf5a18ff808c303137bc72ffcb9976d5215e69a30c8cf2e42172bbb3a815880189381c690b404f5f53acf9100c28d541e48c765b81b07da30a8b3ce"
+    "id": "3eedd48b08e54bb693ad754b9f0ea6125f8932ab9a90d754221999d7986b177e",
+    "sig": "eb6055bd5add9f1414e56510601e530f0ad005ab548e3b7058039d94cd003cbffbf1d5dc481541a59d309f27ad4a979e73de294f9198a29148260e28b0af58ec"
+  },
+  "card_bare": {
+    "pubkey": "5c87e84ce348701797e190282507897370f48448f3ab45f821b98f153b8f9f80",
+    "created_at": 1757000001,
+    "kind": 10154,
+    "tags": [
+      [
+        "title",
+        "Radio Satoshi"
+      ],
+      [
+        "description",
+        "Conversazioni su Bitcoin, ogni settimana."
+      ],
+      [
+        "image",
+        "https://cdn.example.org/radio-satoshi.png"
+      ]
+    ],
+    "content": "",
+    "id": "75b79885004e0f1c55b95633dd8ab0bf7e735b587a22416bb6fb2dbd6dd4ddbc",
+    "sig": "f5d55bb5a176a6d4a53560fd5fee24e9ccc08e5b227ceaed9cb085f9cd438132f795c1f81f50d22609cdbd3c684419e5b485e1dc169a515eddfad44d5086d57f"
   },
   "profile": {
     "pubkey": "5c87e84ce348701797e190282507897370f48448f3ab45f821b98f153b8f9f80",
@@ -61,11 +108,42 @@
         "audio",
         "https://blossom.example.org/aaaa.m4a",
         "audio/mp4"
+      ],
+      [
+        "duration",
+        "3600"
+      ],
+      [
+        "content-warning",
+        ""
       ]
     ],
     "content": "Parliamo di **custodia**.\n\n<script>alert(1)</script>\n\n[link](javascript:alert(1))",
-    "id": "33d25dddc45e7ef190ec3c7bda204023651457887b0b055668cd89040539e203",
-    "sig": "79742d1f4b07fffeb81250da2034762a3316c540ec2c5809c4e3835ecb3b8676b48c763a187d1b154269c909b3666e59f6a27b0105df64a0643b1b000bb44d35"
+    "id": "0091f1a59f94ec36a6dc19b8c4a65f386415c7ffee0c8c686bcd2e3ff92b5c83",
+    "sig": "dc0789d96aefe6bb720676789b13d2c57225e13b6c60cd05d57de06b2f21932a0f240edaadf8cb4036af7bf1fcd380641d782b91a5b85d363a76b55dbd1537fa"
+  },
+  "ep2": {
+    "pubkey": "5c87e84ce348701797e190282507897370f48448f3ab45f821b98f153b8f9f80",
+    "created_at": 1757080000,
+    "kind": 54,
+    "tags": [
+      [
+        "title",
+        "Episodio 1.5 — Senza durata"
+      ],
+      [
+        "description",
+        "Un episodio senza tag duration ne' content-warning."
+      ],
+      [
+        "audio",
+        "https://blossom.example.org/bbbb.mp3",
+        "audio/mpeg"
+      ]
+    ],
+    "content": "",
+    "id": "f3df381c7cbed5377c7b9638abf8b25a2ca86feb51443773b46775b4dd6f11cc",
+    "sig": "114bb24e3728d9d38049835a61015a181694433b15522575bfeb751522536e1fde806f4d50193fd9e07d5b0929decf7dc52970aa8c9f43fb0b60625e620157dc"
   },
   "ep_no_audio": {
     "pubkey": "5c87e84ce348701797e190282507897370f48448f3ab45f821b98f153b8f9f80",

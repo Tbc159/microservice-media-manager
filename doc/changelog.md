@@ -436,6 +436,25 @@ lo interpretano come path relativo al proprio host.
 - Test: tabella dei casi piu' una **guardia complessiva** che nessun `<link>`, `href`, `uri` o
   `url` possa uscire dal builder senza schema.
 
+## 27. Feed: i tag che le piattaforme pretendono (2026-09-18)
+
+Provando il feed contro le piattaforme vere: Apple e Amazon rifiutano un feed senza
+`itunes:category`; Spotify, Amazon e YouTube verificano la proprieta' mandando un codice
+all'`itunes:email`, che non c'era; il validatore W3C segnala `<itunes:owner>` senza
+`<itunes:email>` come **errore**. NIP-F4 non prevede nessuno di questi dati: il client li scrive
+nel 10154 e nel 54 con tag semplici, e il servizio ora li legge.
+
+- **10154**: `category` (fino a 3, principale + sotto-categoria, nomi Apple con `&` escapata solo
+  nell'attributo), `language` (vince su `?lang`), `email` (→ `itunes:owner`), `content-warning`
+  (NIP-36 → `itunes:explicit` true).
+- **54**: `duration` (secondi → `itunes:duration`), `content-warning` (explicit dell'item).
+- **`itunes:owner` esiste solo con l'email**: prima usciva col solo `itunes:name`, ed era un
+  errore W3C. Un owner vuoto e' peggio di nessun owner.
+- `podcast:alternateEnclosure` porta `length`, dalla stessa cache dell'enclosure.
+- Comportamento **invariato** quando i tag mancano: niente categoria inventata, niente owner,
+  niente durata. Fixture con un 10154 completo e uno spoglio: entrambi `validity=true`, 0 errori
+  sul validatore W3C reale.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

@@ -9,7 +9,7 @@
     <title>Radio Satoshi</title>
     <description>Conversazioni su Bitcoin, ogni settimana.</description>
     <link>https://radiosatoshi.example.org</link>
-    <language>it</language>
+    <language>en</language>
     <generator>media-manager feed</generator>
     <atom:link href="https://media.example.org/v0/feed/npub1tjr7sn8rfpcp09lpjq5z2pufwdc0fpzg7w45t7pphx832wu0n7qqn9vpac.xml" rel="self" type="application/rss+xml"/>
     <podcast:guid>1f9b01c4-5f8c-55b2-93ca-4cd750c8ea9b</podcast:guid>
@@ -22,8 +22,14 @@
     <itunes:author>Alice Rossi</itunes:author>
     <itunes:owner>
       <itunes:name>Alice Rossi</itunes:name>
+      <itunes:email>owner@radiosatoshi.example.org</itunes:email>
     </itunes:owner>
-    <itunes:explicit>false</itunes:explicit>
+    <itunes:category text="News">
+      <itunes:category text="Daily News"/>
+    </itunes:category>
+    <itunes:category text="Kids &amp; Family"/>
+    <itunes:category text="Technology"/>
+    <itunes:explicit>true</itunes:explicit>
     <lastBuildDate>Fri, 05 Sep 2025 19:20:00 +0000</lastBuildDate>
     <item>
       <title>Episodio 2 — La custodia</title>
@@ -31,14 +37,25 @@
       <content:encoded><![CDATA[<p>Parliamo di <strong>custodia</strong>.</p>
 <p>&lt;script&gt;alert(1)&lt;/script&gt;</p>
 <p>[link](javascript:alert(1))</p>]]></content:encoded>
-      <guid isPermaLink="false">33d25dddc45e7ef190ec3c7bda204023651457887b0b055668cd89040539e203</guid>
+      <guid isPermaLink="false">0091f1a59f94ec36a6dc19b8c4a65f386415c7ffee0c8c686bcd2e3ff92b5c83</guid>
       <pubDate>Fri, 05 Sep 2025 19:20:00 +0000</pubDate>
-      <link>https://njump.me/nevent1qqsr85jamhz9ulh3jrkrc776ypqzxeg527y8kzc92e5vmzgyq5u7yqcpzdmhxue69uhkgctdw4ejuetcv9khqmr9qyghwumn8ghj7mn0wvhx27rpd4cxcegzypwg06zvudy8q9uhuxgzsfg839ehpayyfre6k30cyxuc79fm370cqqcyqqqqqdslr375t</link>
+      <link>https://njump.me/nevent1qqsqpy035k0efmpk5mwpnwxy5e0nseq4cll7uryvdp4u6t3lly44eqcpzdmhxue69uhkgctdw4ejuetcv9khqmr9qyghwumn8ghj7mn0wvhx27rpd4cxcegzypwg06zvudy8q9uhuxgzsfg839ehpayyfre6k30cyxuc79fm370cqqcyqqqqqdsunxah4</link>
       <itunes:image href="https://cdn.example.org/ep2.png"/>
       <enclosure url="https://blossom.example.org/aaaa.mp3" type="audio/mpeg" length="51200"/>
-      <podcast:alternateEnclosure type="audio/mp4">
+      <itunes:duration>3600</itunes:duration>
+      <itunes:explicit>true</itunes:explicit>
+      <podcast:alternateEnclosure type="audio/mp4" length="40960">
         <podcast:source uri="https://blossom.example.org/aaaa.m4a"/>
       </podcast:alternateEnclosure>
+    </item>
+    <item>
+      <title>Episodio 1.5 — Senza durata</title>
+      <description>Un episodio senza tag duration ne' content-warning.</description>
+      <content:encoded><![CDATA[Un episodio senza tag duration ne' content-warning.]]></content:encoded>
+      <guid isPermaLink="false">f3df381c7cbed5377c7b9638abf8b25a2ca86feb51443773b46775b4dd6f11cc</guid>
+      <pubDate>Fri, 05 Sep 2025 13:46:40 +0000</pubDate>
+      <link>https://njump.me/nevent1qqs08hecr37ta4fh03aevw9tlze95t9gdl44z3phww6xwad5m4h3rnqpzdmhxue69uhkgctdw4ejuetcv9khqmr9qyghwumn8ghj7mn0wvhx27rpd4cxcegzypwg06zvudy8q9uhuxgzsfg839ehpayyfre6k30cyxuc79fm370cqqcyqqqqqdsyf92pp</link>
+      <enclosure url="https://blossom.example.org/bbbb.mp3" type="audio/mpeg" length="30720"/>
     </item>
     <!-- saltati: 1 senza audio -->
   </channel>
