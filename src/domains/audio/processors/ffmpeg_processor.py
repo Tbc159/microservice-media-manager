@@ -21,12 +21,16 @@ def _bin() -> str:
     # Risolto a ogni chiamata: i test possono puntarlo al binario statico imageio-ffmpeg.
     return os.environ.get("FFMPEG_BIN", "ffmpeg")
 
-# media_type -> (estensione, argomenti codec di output)
+# media_type -> (estensione, codec). Il bitrate dei formati lossy e' un parametro del job.
 _FORMATS = {
-    "audio/mpeg": ("mp3", ["-c:a", "libmp3lame", "-q:a", "2"]),
-    "audio/m4a": ("m4a", ["-c:a", "aac", "-b:a", "192k"]),
+    "audio/mpeg": ("mp3", ["-c:a", "libmp3lame"]),
+    "audio/m4a": ("m4a", ["-c:a", "aac"]),
     "audio/wav": ("wav", ["-c:a", "pcm_s16le"]),
 }
+_LOSSY = frozenset({"audio/mpeg", "audio/m4a"})
+DEFAULT_BITRATE_KBPS = 128
+MIN_BITRATE_KBPS, MAX_BITRATE_KBPS = 64, 320
+COVER_SIDE_PX = 1400            # copertina quadrata: il minimo che Apple accetta
 
 # input accettati dalle operazioni audio (i wav inclusi: nessuna conversione a carico del client)
 INPUT_AUDIO_TYPES = frozenset({"audio/m4a", "audio/mpeg", "audio/mp3", "audio/wav"})
@@ -54,8 +58,26 @@ def ext_for(media_type: str) -> str:
     return _FORMATS[media_type][0]
 
 
-def output_args(media_type: str) -> list[str]:
-    return list(_FORMATS[media_type][1])
+def output_args(media_type: str, bitrate_kbps: Optional[int] = None) -> list[str]:
+    """Argomenti codec. Per i formati lossy **bitrate costante** (`-b:a`, mai `-q:a`/VBR).
+
+    Molti lettori di podcast stimano la durata dal bitrate del primo frame: con un VBR la
+    barra di avanzamento sbaglia e la durata mostrata non e' quella reale. CBR a 128 kbps e'
+    quello che i lettori si aspettano da un mp3 parlato.
+    """
+    args = list(_FORMATS[media_type][1])
+    if media_type in _LOSSY:
+        kbps = clamp_bitrate(bitrate_kbps)
+        args += ["-b:a", f"{kbps}k"]
+    return args
+
+
+def clamp_bitrate(bitrate_kbps: Optional[int]) -> int:
+    try:
+        kbps = int(bitrate_kbps) if bitrate_kbps is not None else DEFAULT_BITRATE_KBPS
+    except (TypeError, ValueError):
+        kbps = DEFAULT_BITRATE_KBPS
+    return max(MIN_BITRATE_KBPS, min(MAX_BITRATE_KBPS, kbps))
 
 
 def is_supported_output(media_type: str) -> bool:
@@ -98,23 +120,79 @@ def _run(args: list[str]) -> str:
     return r.stderr
 
 
-def run_normalize(inp, out, *, maxgain, target_lufs, true_peak, lra, two_pass, out_fmt) -> None:
+def run_normalize(inp, out, *, maxgain, target_lufs, true_peak, lra, two_pass, out_fmt,
+                  bitrate_kbps=None) -> None:
     measured = None
     if two_pass:
         af_measure = normalize_af(maxgain, target_lufs, true_peak, lra) + ":print_format=json"
         stderr = _run(["-i", inp, "-af", af_measure, "-f", "null", "-"])
         measured = json.loads(stderr[stderr.rfind("{"): stderr.rfind("}") + 1])
     af = normalize_af(maxgain, target_lufs, true_peak, lra, measured=measured)
-    _run(["-i", inp, "-af", af, "-ar", "44100", *output_args(out_fmt), out])
+    _run(["-i", inp, "-af", af, "-ar", "44100", *output_args(out_fmt, bitrate_kbps), out])
 
 
-def run_silence(inp, out, *, threshold_db, min_pause_s, keep_silence_s, out_fmt) -> None:
+def run_silence(inp, out, *, threshold_db, min_pause_s, keep_silence_s, out_fmt,
+                bitrate_kbps=None) -> None:
     _run(["-i", inp, "-af", silence_af(threshold_db, min_pause_s, keep_silence_s),
-          *output_args(out_fmt), out])
+          *output_args(out_fmt, bitrate_kbps), out])
 
 
-def run_convert(inp, out, *, out_fmt) -> None:
-    _run(["-i", inp, *output_args(out_fmt), out])
+def run_convert(inp, out, *, out_fmt, bitrate_kbps=None) -> None:
+    _run(["-i", inp, *output_args(out_fmt, bitrate_kbps), out])
+
+
+# ── Tag ID3 (solo mp3) ──────────────────────────────────────────────────────────
+
+_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+
+
+def probe_duration_s(path) -> Optional[float]:
+    """Durata in secondi letta da ffmpeg stesso (`-f null -`): niente dipendenza da ffprobe,
+    che nel binario statico dei test non c'e'."""
+    stderr = _run(["-i", path, "-f", "null", "-"])
+    m = _DURATION_RE.search(stderr)
+    if not m:
+        return None
+    h, mi, sec = int(m.group(1)), int(m.group(2)), float(m.group(3))
+    return h * 3600 + mi * 60 + sec
+
+
+def id3_args(*, title=None, artist=None, album=None, duration_ms=None, with_cover=False) -> list[str]:
+    """Argomenti di OUTPUT per scrivere i tag **ID3v2.3** (non v2.4: e' quello che tutti leggono).
+
+    Solo i campi presenti diventano tag: niente "Unknown". Con `with_cover` il secondo input
+    (il JPEG) viene mappato come frame APIC via `-disposition:v attached_pic`. Puro: gli input
+    li mette `write_id3`.
+    """
+    args = ["-map", "0:a"]
+    if with_cover:
+        args += ["-map", "1:v", "-disposition:v:0", "attached_pic"]
+    args += ["-c", "copy", "-id3v2_version", "3"]
+    for key, value in (("title", title), ("artist", artist), ("album", album)):
+        if value:
+            args += ["-metadata", f"{key}={value}"]
+    if duration_ms is not None:
+        args += ["-metadata", f"TLEN={int(duration_ms)}"]
+    return args
+
+
+def write_id3(inp, out, *, title=None, artist=None, album=None, duration_ms=None,
+              cover_path=None) -> None:
+    """Rimuxa `inp` in `out` aggiungendo i tag: stream audio copiato, nessuna ricodifica."""
+    inputs = ["-i", inp] + (["-i", cover_path] if cover_path else [])
+    _run([*inputs, *id3_args(title=title, artist=artist, album=album, duration_ms=duration_ms,
+                             with_cover=bool(cover_path)), out])
+
+
+def prepare_cover(image_bytes: bytes, out_path: str, side: int = COVER_SIDE_PX) -> None:
+    """Copertina come JPEG quadrato `side`x`side` (ritaglio centrato): il formato che i
+    lettori si aspettano nell'APIC, qualunque cosa sia stata caricata in archivio."""
+    import io
+
+    from PIL import Image, ImageOps
+
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    ImageOps.fit(img, (side, side), Image.LANCZOS).save(out_path, "JPEG", quality=88)
 
 
 def run_split(inp, out_dir, stem, *, segment_seconds, out_fmt) -> list[str]:

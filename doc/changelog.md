@@ -436,6 +436,22 @@ lo interpretano come path relativo al proprio host.
 - Test: tabella dei casi piu' una **guardia complessiva** che nessun `<link>`, `href`, `uri` o
   `url` possa uscire dal builder senza schema.
 
+## 28. Audio: mp3 CBR 128 kbps con tag ID3v2.3 (2026-09-18)
+
+Bitrate e tag ID3 vivono nel file, non nel feed: l'RSS dichiara solo il MIME. Quindi e' il
+dominio `audio` — che i file li produce — a metterli. Delta su normalize/silence/convert.
+
+- **Bitrate costante**: `-b:a <kbps>k`, mai `-q:a`/VBR — molti lettori stimano la durata dal
+  bitrate del primo frame e con un VBR la barra sbaglia. `bitrate_kbps` parametro del job
+  (default 128, 64–320). Il test e2e legge ogni frame MPEG e pretende che siano tutti uguali.
+- **ID3v2.3** (non v2.4): `TIT2` dal `title`, `TPE1`/`TALB` da `show_title`, `APIC` dalla
+  `cover` (MediaRef a un'immagine, ridotta a 1400x1400 JPEG), `TLEN` misurata sul risultato.
+  Campo assente = tag assente, mai "Unknown". Seconda passata con `-c copy`: nessuna ricodifica.
+- `cover` risolta al submit: riferimento sbagliato o non immagine -> `400` subito.
+- Durata letta da ffmpeg (`-f null -`): niente dipendenza da `ffprobe`, che il binario statico
+  dei test non ha. In CI i tag si verificano con un lettore ID3 minimale in Python.
+- Fuori perimetro: file caricati direttamente dall'utente — non passano dal servizio.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione
