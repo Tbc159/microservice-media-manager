@@ -76,8 +76,25 @@ paths:
         cache per URL (gli URL Blossom sono content-addressed, il valore non cambia). Se la
         `HEAD` non riesce: `length="0"` e un commento che lo dice — l'enclosure non si omette.
 
-        **Non dichiarato**: `itunes:duration` (non e' nell'evento e calcolarla costerebbe un
-        ffprobe per episodio) e `itunes:category` (non si inventa una categoria).
+        **Tag oltre NIP-F4.** Le piattaforme pretendono dati che NIP-F4 non prevede: Apple e
+        Amazon rifiutano un feed senza `itunes:category`; Spotify, Amazon e YouTube verificano
+        la proprieta' scrivendo all'`itunes:email`; il validatore W3C tratta un `itunes:owner`
+        senza email come errore. Il client li scrive con tag semplici e qui vengono letti — tutti
+        facoltativi, e senza di essi il comportamento non cambia:
+
+        | evento | tag | diventa |
+        |---|---|---|
+        | 10154 | `["category", "News", "Daily News"]` (fino a 3, il primo e' la primaria) | `<itunes:category text="News"><itunes:category text="Daily News"/></itunes:category>` |
+        | 10154 | `["language", "it"]` (ISO 639-1) | `<language>` — vince su `?lang`, che vince sul default |
+        | 10154 | `["email", "owner@esempio.tld"]` | `<itunes:owner>` con `itunes:name` e `itunes:email`; **senza email nessun owner** |
+        | 10154 | `["content-warning", "..."]` (NIP-36, anche vuoto) | `<itunes:explicit>true</itunes:explicit>` |
+        | 54 | `["duration", "3600"]` (secondi interi) | `<itunes:duration>` |
+        | 54 | `["content-warning", "..."]` | `<itunes:explicit>true</itunes:explicit>` nell'item |
+
+        I nomi delle categorie sono quelli **esatti** di Apple, `&` compresa: la validazione
+        contro l'elenco la fa il client prima di pubblicare, il servizio riporta cio' che trova.
+        **Non si inventa**: senza tag `category` nessun `itunes:category`, senza `email` nessun
+        `itunes:owner`, senza `duration` nessun `itunes:duration`.
       parameters:
         - name: npub
           in: path

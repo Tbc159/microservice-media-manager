@@ -11,8 +11,12 @@ from tests.nostr_fixtures import make_event
 
 SK = "b7" * 32
 FIXTURES = json.load(open("tests/fixtures/feed_events.json"))
-CARD, PROFILE, EP1 = FIXTURES["card"], FIXTURES["profile"], FIXTURES["ep1"]
+CARD, CARD_BARE = FIXTURES["card"], FIXTURES["card_bare"]     # completa / senza tag extra
+PROFILE, EP1, EP2 = FIXTURES["profile"], FIXTURES["ep1"], FIXTURES["ep2"]
 PK = FIXTURES["pubkey"]
+LENGTHS = {"https://blossom.example.org/aaaa.mp3": 51200,
+           "https://blossom.example.org/aaaa.m4a": 40960,
+           "https://blossom.example.org/bbbb.mp3": 30720}
 
 
 def _build(**over):
@@ -62,14 +66,21 @@ def test_feed_is_well_formed_and_has_the_tags_apple_requires():
     for tag in ("title", "description", "language"):
         assert channel.findtext(tag), tag
     assert channel.find(f"{itunes}image") is not None
-    assert channel.findtext(f"{itunes}explicit") == "false"
+    assert channel.findtext(f"{itunes}explicit") == "true"       # la card completa ha content-warning
     assert channel.find("item/enclosure") is not None
+    bare = ET.fromstring(_build(card=CARD_BARE)).find("channel")
+    assert bare.findtext(f"{itunes}explicit") == "false"
 
 
-def test_category_and_duration_are_not_invented():
-    body = _build()
+def test_category_duration_owner_are_not_invented():
+    """Senza i tag nel 10154/54 non compaiono: niente "Technology" di default, e un
+    <itunes:owner> senza email e' un ERRORE per il validatore W3C, quindi si omette del tutto."""
+    body = _build(card=CARD_BARE, episodes=[EP2])
     assert "itunes:category" not in body
     assert "itunes:duration" not in body
+    assert "itunes:owner" not in body
+    assert "<itunes:explicit>false</itunes:explicit>" in body
+    assert body.count("<itunes:explicit>") == 1        # solo nel canale, non nell'item
 
 
 def test_link_falls_back_to_njump_when_the_card_has_no_website():
@@ -264,10 +275,9 @@ def test_matches_the_expected_feed_ignoring_whitespace():
 
     relays = ["wss://damus.example", "wss://nos.example"]
     body = rss_builder.build_feed(
-        card=CARD, profile=PROFILE, episodes=[EP1], pubkey_hex=PK,
+        card=CARD, profile=PROFILE, episodes=[EP1, EP2], pubkey_hex=PK,
         feed_url=f"https://media.example.org/v0/feed/{nip19.hex_to_npub(PK)}.xml",
-        lang="it", relays=relays,
-        enclosure_lengths={"https://blossom.example.org/aaaa.mp3": 51200},
+        lang="it", relays=relays, enclosure_lengths=LENGTHS,
         skipped=1, episode_relay_hints=relays)
     expected = open("tests/fixtures/feed_expected.xml").read()
     import re
@@ -351,3 +361,97 @@ def test_every_url_in_the_generated_feed_is_absolute():
             + re.findall(r'(?:href|uri|url)="([^"]+)"', body))
     non_assoluti = [u for u in urls if not u.startswith(("http://", "https://"))]
     assert non_assoluti == [], non_assoluti
+
+
+# ── tag oltre NIP-F4: cio' che le piattaforme pretendono ───────────────────────
+
+def _channel(body):
+    return ET.fromstring(body).find("channel")
+
+
+IT = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
+
+
+def test_categories_in_order_with_subcategory_and_escaped_ampersand():
+    body = _build()
+    assert ('<itunes:category text="News">\n'
+            '      <itunes:category text="Daily News"/>\n'
+            '    </itunes:category>') in body
+    assert '<itunes:category text="Kids &amp; Family"/>' in body     # nome Apple, & escapata
+    cats = _channel(body).findall(f"{IT}category")
+    assert [c.get("text") for c in cats] == ["News", "Kids & Family", "Technology"]
+    assert cats[0].find(f"{IT}category").get("text") == "Daily News"
+
+
+def test_at_most_three_categories_first_is_primary():
+    card = make_event(SK, kind=10154, created_at=1, tags=[["title", "T"]] + [
+        ["category", f"C{i}"] for i in range(6)])
+    cats = _channel(_build(card=card)).findall(f"{IT}category")
+    assert [c.get("text") for c in cats] == ["C0", "C1", "C2"]
+
+
+def test_language_tag_wins_over_requested_which_wins_over_default():
+    assert "<language>en</language>" in _build(lang="it")          # il tag (en) vince su ?lang
+    assert "<language>de</language>" in _build(card=CARD_BARE, lang="de")   # ?lang vince
+    bad = make_event(SK, kind=10154, created_at=1, tags=[["title", "T"], ["language", "italiano"]])
+    assert "<language>it</language>" in _build(card=bad, lang="it")  # non e' un codice: ignorato
+
+
+def test_owner_has_email_or_does_not_exist():
+    """Spotify/Amazon/YouTube verificano la proprieta' scrivendo all'itunes:email; per il W3C un
+    owner senza email e' un errore. Quindi: con email, name+email; senza, niente owner."""
+    with_email = _build()
+    assert ("<itunes:owner>\n      <itunes:name>Alice Rossi</itunes:name>\n"
+            "      <itunes:email>owner@radiosatoshi.example.org</itunes:email>\n"
+            "    </itunes:owner>") in with_email
+    assert "itunes:owner" not in _build(card=CARD_BARE)
+
+
+def test_content_warning_marks_explicit_even_when_empty():
+    """NIP-36: e' la presenza del tag che conta, non il suo testo."""
+    card = make_event(SK, kind=10154, created_at=1, tags=[["title", "T"], ["content-warning", ""]])
+    assert "<itunes:explicit>true</itunes:explicit>" in _build(card=card)
+
+
+def test_episode_duration_and_explicit_only_when_declared():
+    body = _build(episodes=[EP1, EP2], enclosure_lengths=LENGTHS)
+    items = ET.fromstring(body).findall("channel/item")
+    assert items[0].findtext(f"{IT}duration") == "3600"           # EP1: tag duration
+    assert items[0].findtext(f"{IT}explicit") == "true"           # EP1: content-warning (vuoto)
+    assert items[1].find(f"{IT}duration") is None                 # EP2: niente
+    assert items[1].find(f"{IT}explicit") is None
+
+
+def test_non_integer_duration_is_ignored():
+    event = make_event(SK, kind=54, created_at=1, tags=[
+        ["title", "T"], ["audio", "https://x/a.mp3", "audio/mpeg"], ["duration", "1:00:00"]])
+    assert "itunes:duration" not in _build(episodes=[event])
+
+
+def test_alternate_enclosure_carries_its_length():
+    body = _build(enclosure_lengths=LENGTHS)
+    assert '<podcast:alternateEnclosure type="audio/mp4" length="40960">' in body
+    # length ignota -> attributo omesso, non "0" (qui non e' obbligatorio come nell'enclosure)
+    assert '<podcast:alternateEnclosure type="audio/mp4">' in _build(enclosure_lengths={})
+
+
+def test_complete_and_bare_cards_both_satisfy_the_w3c_rules():
+    """Cio' che il validatore W3C (feedvalidator.org) controlla e che in CI si puo' verificare
+    senza rete: ben formato, owner con email o assente, category solo come attributo text,
+    explicit true/false, language a due lettere. Entrambe le fixture sono state passate al
+    validatore reale in sviluppo: validity=true, 0 errori."""
+    for card in (CARD, CARD_BARE):
+        channel = _channel(_build(card=card, episodes=[EP1, EP2], enclosure_lengths=LENGTHS))
+        owner = channel.find(f"{IT}owner")
+        assert owner is None or owner.findtext(f"{IT}email")
+        for cat in channel.iter(f"{IT}category"):
+            assert cat.get("text") and not (cat.text or "").strip()
+        assert channel.findtext(f"{IT}explicit") in ("true", "false")
+        assert len(channel.findtext("language").split("-")[0]) == 2
+        for item in channel.findall("item"):
+            assert item.find("enclosure").get("length").isdigit()
+
+
+def test_etag_body_is_stable_with_the_new_tags():
+    assert _build(episodes=[EP1, EP2], enclosure_lengths=LENGTHS) == \
+        _build(episodes=[EP1, EP2], enclosure_lengths=LENGTHS)
