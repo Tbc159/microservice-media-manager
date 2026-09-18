@@ -41,3 +41,39 @@ def test_supported_sets():
     assert not fp.is_supported_output("image/png")
     assert "audio/wav" in fp.INPUT_AUDIO_TYPES  # i wav sono input validi
     assert fp.OUTPUT_FORMATS == {"audio/mpeg", "audio/m4a", "audio/wav"}
+
+
+# ── mp3 pronto per i lettori: CBR + ID3v2.3 ─────────────────────────────────────
+
+def test_mp3_is_cbr_never_vbr():
+    """Molti lettori stimano la durata dal bitrate del primo frame: con un VBR la barra di
+    avanzamento sbaglia. Quindi `-b:a`, mai `-q:a`."""
+    args = fp.output_args("audio/mpeg")
+    assert "-q:a" not in args
+    assert args[args.index("-b:a") + 1] == "128k"
+
+
+def test_bitrate_is_a_parameter_clamped_to_64_320():
+    assert fp.output_args("audio/mpeg", 192)[-1] == "192k"
+    assert fp.output_args("audio/m4a", 96)[-1] == "96k"
+    assert fp.clamp_bitrate(None) == 128
+    assert fp.clamp_bitrate(32) == 64 and fp.clamp_bitrate(999) == 320
+    assert fp.clamp_bitrate("abc") == 128
+    assert "-b:a" not in fp.output_args("audio/wav", 128)      # lossless: ignorato
+
+
+def test_id3_args_write_only_present_fields_as_v23():
+    args = fp.id3_args(title="Puntata 42", artist="Radio", album="Radio", duration_ms=3000,
+                       with_cover=True)
+    assert args[args.index("-id3v2_version") + 1] == "3"      # v2.3, non v2.4
+    assert "-metadata" in args and "title=Puntata 42" in args
+    assert "artist=Radio" in args and "album=Radio" in args and "TLEN=3000" in args
+    assert "attached_pic" in args and "1:v" in args
+    assert args[args.index("-c") + 1] == "copy"               # nessuna ricodifica
+
+
+def test_id3_args_omit_missing_fields_no_unknown():
+    args = fp.id3_args(title=None, artist=None, album=None, duration_ms=None, with_cover=False)
+    assert not any(a.startswith(("title=", "artist=", "album=", "TLEN=")) for a in args)
+    assert "attached_pic" not in args
+    assert "Unknown" not in " ".join(args)

@@ -7,6 +7,13 @@ info:
     accorciamento silenzi, conversione, analisi, split, concat). Porta qui le capacita' del
     vecchio servizio `ffmpeg` di microservices-media, **senza** i suoi vincoli.
 
+    **Il file mp3 prodotto e' pronto per i lettori.** Bitrate **costante** (`bitrate_kbps`,
+    default 128) e tag **ID3v2.3** — non v2.4, e' quello che tutti leggono: `TIT2` dal `title`,
+    `TPE1`/`TALB` da `show_title`, `APIC` dalla `cover` (1400x1400 JPEG), `TLEN` misurata sul
+    risultato. Un campo assente = tag assente, mai "Unknown". I tag e il bitrate vivono nel file,
+    non nel feed: l'RSS dichiara solo il MIME dell'enclosure. Vale per normalize/silence/convert;
+    i file caricati direttamente dall'utente non passano di qui e non vengono toccati.
+
     Principi:
     - **Input = riferimento** a un media gia' in archivio (`MediaRef` = id o filename), risolto via
       `source` — non un upload dentro l'operazione: la stessa sorgente si riusa fra piu' tentativi.
@@ -95,7 +102,15 @@ paths:
                   $ref: '#/components/schemas/OutputFormat'
                 title:
                   type: string
-                  description: Titolo del media prodotto (default derivato dalla sorgente).
+                  description: |
+                    Titolo del media prodotto (default derivato dalla sorgente). Per gli mp3
+                    diventa anche il tag ID3 `TIT2`: solo se indicato, mai un valore inventato.
+                bitrate_kbps:
+                  $ref: '#/components/schemas/BitrateKbps'
+                show_title:
+                  $ref: '#/components/schemas/ShowTitle'
+                cover:
+                  $ref: '#/components/schemas/CoverRef'
       responses:
         '202':
           $ref: '#/components/responses/JobAccepted'
@@ -151,6 +166,13 @@ paths:
                   default: audio/wav
                 title:
                   type: string
+                  description: Titolo del media prodotto. Per gli mp3 e' anche il tag ID3 `TIT2`.
+                bitrate_kbps:
+                  $ref: '#/components/schemas/BitrateKbps'
+                show_title:
+                  $ref: '#/components/schemas/ShowTitle'
+                cover:
+                  $ref: '#/components/schemas/CoverRef'
       responses:
         '202':
           $ref: '#/components/responses/JobAccepted'
@@ -184,6 +206,13 @@ paths:
                   $ref: '#/components/schemas/OutputFormat'
                 title:
                   type: string
+                  description: Titolo del media prodotto. Per gli mp3 e' anche il tag ID3 `TIT2`.
+                bitrate_kbps:
+                  $ref: '#/components/schemas/BitrateKbps'
+                show_title:
+                  $ref: '#/components/schemas/ShowTitle'
+                cover:
+                  $ref: '#/components/schemas/CoverRef'
       responses:
         '202':
           $ref: '#/components/responses/JobAccepted'
@@ -368,6 +397,33 @@ components:
       description: Formato (MIME) del media prodotto. Solo formati audio comprimibili/lossless noti.
       enum: [audio/mpeg, audio/m4a, audio/wav]
       default: audio/mpeg
+
+    BitrateKbps:
+      type: integer
+      minimum: 64
+      maximum: 320
+      default: 128
+      description: |
+        Bitrate **costante** (CBR) dei formati lossy, in kbps. Per `audio/mpeg` la codifica e'
+        `-b:a <kbps>k` senza `-q:a`: molti lettori di podcast stimano la durata dal bitrate del
+        primo frame, e con un VBR la barra di avanzamento sbaglia e la durata mostrata non e'
+        quella reale. 128 kbps e' lo standard per il parlato. Ignorato per `audio/wav`.
+
+    ShowTitle:
+      type: string
+      description: |
+        Nome dello show. Per gli mp3 diventa i tag ID3 `TPE1` (artista) e `TALB` (album): e' cosi'
+        che i lettori raggruppano gli episodi. Assente -> i due tag non vengono scritti (mai
+        "Unknown"). I tag vivono **nel file**, non nel feed: l'RSS dichiara solo il MIME.
+
+    CoverRef:
+      allOf:
+        - $ref: '#/components/schemas/MediaRef'
+      description: |
+        Copertina: riferimento (id o nome file) a un'immagine `image/png|jpeg|webp` gia' in
+        archivio. Per gli mp3 diventa il frame ID3 `APIC`, ridotta a **1400x1400 JPEG**
+        (ritaglio centrato): il formato che i lettori si aspettano. Riferimento non risolvibile
+        o non immagine -> `400` al submit, non un job fallito dopo la codifica.
 
     JobAccepted:
       type: object
