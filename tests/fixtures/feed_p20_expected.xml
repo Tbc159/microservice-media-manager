@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- relays: wss://nos.example -->
+<rss version="2.0"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     xmlns:atom="http://www.w3.org/2005/Atom"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>Radio Satoshi</title>
+    <description>Conversazioni su Bitcoin.</description>
+    <link>https://njump.me/npub1gw9y7c3sn8nuywyhp2zgrvpagj0aghxzcgv9uuum9regeef59wes6uskau</link>
+    <language>it</language>
+    <generator>media-manager feed</generator>
+    <atom:link href="https://feed.radiosatoshi.example.org/rss.xml" rel="self" type="application/rss+xml"/>
+    <itunes:new-feed-url>https://feed.radiosatoshi.example.org/rss.xml</itunes:new-feed-url>
+    <podcast:guid>917393e3-1b1e-5cef-ace4-edaa54e1f810</podcast:guid>
+    <image>
+      <url>https://cdn.example.org/cover.png</url>
+      <title>Radio Satoshi</title>
+      <link>https://njump.me/npub1gw9y7c3sn8nuywyhp2zgrvpagj0aghxzcgv9uuum9regeef59wes6uskau</link>
+    </image>
+    <itunes:image href="https://cdn.example.org/cover.png"/>
+    <itunes:author>Redazione Radio Satoshi</itunes:author>
+    <itunes:owner>
+      <itunes:name>Redazione Radio Satoshi</itunes:name>
+      <itunes:email>owner@radiosatoshi.example.org</itunes:email>
+    </itunes:owner>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:type>serial</itunes:type>
+    <podcast:person role="host" group="cast" img="https://cdn.example.org/alice.png" href="https://alice.example.org">Alice Rossi</podcast:person>
+    <podcast:value type="lightning" method="keysend" suggested="0.00000005000">
+      <podcast:valueRecipient name="Alice" type="node" address="02d5c1bf8b940dc9cadca86d1b0a3c37fbe39cee4c7e839e33bef9174531d27f52" split="90"/>
+      <podcast:valueRecipient name="Host" type="node" address="03ae9f91a0cb8ff43840e3c322c4c61f019d8c1c3cea15a25cfc425ac605e61a4a" split="10" fee="true"/>
+    </podcast:value>
+    <podcast:funding url="https://radiosatoshi.example.org/sostieni">Sostieni lo show</podcast:funding>
+    <lastBuildDate>Wed, 15 Oct 2025 03:46:40 +0000</lastBuildDate>
+    <item>
+      <title>Ep. 2 — Trailer</title>
+      <description>Il trailer della stagione 2.</description>
+      <content:encoded><![CDATA[Il trailer della stagione 2.]]></content:encoded>
+      <guid isPermaLink="false">f1a5b1f6a1c86dd9cf4fdce675592df6a8424a868ba6cd94e0e491ec8352beba</guid>
+      <pubDate>Wed, 15 Oct 2025 03:46:40 +0000</pubDate>
+      <link>https://njump.me/nevent1qqs0rfd376susmweea8aeen4tykld2zzf2rghfkdjnswfy0vsdftawspz9mhxue69uhkummn9ejhsctdwpkx2q3qgw9y7c3sn8nuywyhp2zgrvpagj0aghxzcgv9uuum9regeef59wesxpqqqqqrvuc74em</link>
+      <enclosure url="https://blossom.example.org/b.mp3" type="audio/mpeg" length="2000"/>
+      <itunes:season>2</itunes:season>
+      <podcast:season>2</podcast:season>
+      <podcast:episode>2.5</podcast:episode>
+      <itunes:episodeType>trailer</itunes:episodeType>
+    </item>
+    <item>
+      <title>Ep. 1 — Migrato</title>
+      <description>Episodio importato da un vecchio host.</description>
+      <content:encoded><![CDATA[Episodio importato da un vecchio host.]]></content:encoded>
+      <guid isPermaLink="false">https://oldhost.example.com/ep?id=1&amp;show=rs</guid>
+      <pubDate>Tue, 14 Nov 2023 22:13:20 +0000</pubDate>
+      <link>https://njump.me/nevent1qqszp78ly0z5v3cadq8tm3u2m6f78jjtjd9246ykfpqkp9slm8nx08qpz9mhxue69uhkummn9ejhsctdwpkx2q3qgw9y7c3sn8nuywyhp2zgrvpagj0aghxzcgv9uuum9regeef59wesxpqqqqqrvnch9xc</link>
+      <enclosure url="https://blossom.example.org/a.mp3" type="audio/mpeg" length="1000"/>
+      <itunes:season>1</itunes:season>
+      <podcast:season>1</podcast:season>
+      <itunes:episode>1</itunes:episode>
+      <podcast:episode>1</podcast:episode>
+      <itunes:episodeType>full</itunes:episodeType>
+      <podcast:transcript url="https://cdn.example.org/ep1.vtt" type="text/vtt"/>
+      <podcast:transcript url="https://cdn.example.org/ep1.srt" type="application/srt"/>
+      <podcast:chapters url="https://cdn.example.org/ep1.json" type="application/json+chapters"/>
+      <podcast:person role="guest">Bob Verdi</podcast:person>
+      <podcast:value type="lightning" method="keysend" suggested="0.00000005000">
+        <podcast:valueRecipient name="Alice" type="node" address="02d5c1bf8b940dc9cadca86d1b0a3c37fbe39cee4c7e839e33bef9174531d27f52" split="90"/>
+      </podcast:value>
+    </item>
+  </channel>
+</rss>

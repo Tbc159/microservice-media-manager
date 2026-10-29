@@ -182,6 +182,78 @@ def _author_name(profile: Optional[dict], npub: str) -> str:
     return npub
 
 
+# ── Podcasting 2.0 / NIP-73: tag facoltativi del client ──────────────────────────
+#
+# Regola comune: tag assente -> output identico a prima (stesso corpo, stesso ETag). Nessuno di
+# questi si inventa; i valori si ESCAPANO e basta (i GUID non si validano: un vecchio host puo'
+# aver usato URL o stringhe qualsiasi, e riscriverli cambierebbe l'identita' dell'episodio).
+
+_EPISODE_TYPES = frozenset({"full", "trailer", "bonus"})
+_SHOW_TYPES = frozenset({"episodic", "serial"})
+_DECIMAL_RE = re.compile(r"^\d+(\.\d+)?$")
+
+
+def nip73_value(event: dict, prefix: str) -> Optional[str]:
+    """Valore di un tag `i` NIP-73 con quel prefisso (`podcast:guid:`, `podcast:item:guid:`)."""
+    for values in tag_values(event, "i"):
+        raw = values[0] if values else ""
+        if raw.startswith(prefix) and raw[len(prefix):].strip():
+            return raw[len(prefix):].strip()
+    return None
+
+
+def pub_timestamp(event: dict) -> int:
+    """`published_at` se c'e' ed e' intero, altrimenti `created_at`: data E ordine dell'item.
+
+    Un episodio ripubblicato (correzione, migrazione) ha un `created_at` nuovo ma non e' un
+    episodio nuovo: senza `published_at` salirebbe in cima al feed."""
+    raw = (first_tag_value(event, "published_at") or "").strip()
+    return int(raw) if raw.isdigit() else int(event["created_at"])
+
+
+def _attrs(pairs) -> str:
+    """` k="v"` per le sole coppie con valore non vuoto, nell'ordine dato."""
+    return "".join(f" {k}={quoteattr(v)}" for k, v in pairs if v)
+
+
+def _persons(event: dict, indent: str) -> str:
+    """`["person", name, role, group, img, href]` -> `<podcast:person>`; vuoti in coda omessi."""
+    out = []
+    for values in tag_values(event, "person"):
+        name = (values[0] if values else "").strip()
+        if not name:
+            continue
+        rest = [(v or "").strip() for v in values[1:5]] + [""] * 4
+        role, group, img, href = rest[:4]
+        attrs = _attrs([("role", role), ("group", group),
+                        ("img", absolute_url(img) if img else ""),
+                        ("href", absolute_url(href) if href else "")])
+        out.append(f"{indent}<podcast:person{attrs}>{escape(name)}</podcast:person>\n")
+    return "".join(out)
+
+
+def _value_block(event: dict, indent: str) -> str:
+    """`value` + `value-recipient` -> `<podcast:value>` con i suoi `<podcast:valueRecipient>`."""
+    values = tag_values(event, "value")
+    if not values or not values[0] or not (values[0][0] or "").strip():
+        return ""
+    v = [(x or "").strip() for x in values[0][:3]] + [""] * 3
+    head = _attrs([("type", v[0]), ("method", v[1]), ("suggested", v[2])])
+    recipients = []
+    for r in tag_values(event, "value-recipient"):
+        r = [(x or "").strip() for x in r[:7]] + [""] * 7
+        name, rtype, address, split, ckey, cval, fee = r[:7]
+        if not address:
+            continue
+        attrs = _attrs([("name", name), ("type", rtype), ("address", address), ("split", split),
+                        ("customKey", ckey), ("customValue", cval),
+                        ("fee", "true" if fee.lower() == "true" else "")])
+        recipients.append(f"{indent}  <podcast:valueRecipient{attrs}/>\n")
+    if not recipients:
+        return f"{indent}<podcast:value{head}/>\n"
+    return f"{indent}<podcast:value{head}>\n" + "".join(recipients) + f"{indent}</podcast:value>\n"
+
+
 def build_feed(
     *,
     card: dict,
@@ -203,7 +275,15 @@ def build_feed(
     description = first_tag_value(card, "description") or ""
     image = absolute_url(first_tag_value(card, "image"))
     website = absolute_url(first_tag_value(card, "website")) or f"{NJUMP}{npub}"
-    author = _author_name(profile, npub)
+    author = (first_tag_value(card, "author") or "").strip() or _author_name(profile, npub)
+    # Indirizzo pubblico stabile dichiarato dal creatore: dietro al SUO reverse proxy il servizio
+    # vede il proprio host, non quello pubblico, quindi il vero indirizzo puo' venire solo dalla
+    # scheda. Se manca, l'URL della richiesta come prima.
+    declared_feed = absolute_url(first_tag_value(card, "feed"))
+    self_url = declared_feed or feed_url
+    # Identita': il guid NIP-73 se dichiarato, altrimenti il calcolo di sempre sull'URL della
+    # richiesta. MAI dal tag `feed`: un'identita' non cambia perche' si e' aggiunto un indirizzo.
+    guid = nip73_value(card, "podcast:guid:") or podcast_guid(feed_url)
 
     out = ['<?xml version="1.0" encoding="UTF-8"?>\n']
     # I relay interrogati in testa: un feed vuoto e' quasi sempre un problema di relay, e
@@ -223,9 +303,12 @@ def build_feed(
     out.append(_tag("link", website))
     out.append(_tag("language", language(card, lang)))
     out.append(f"    <generator>{escape(GENERATOR)}</generator>\n")
-    out.append(f'    <atom:link href={quoteattr(feed_url)} rel="self" '
+    out.append(f'    <atom:link href={quoteattr(self_url)} rel="self" '
                'type="application/rss+xml"/>\n')
-    out.append(f"    <podcast:guid>{podcast_guid(feed_url)}</podcast:guid>\n")
+    if declared_feed:
+        # E' cio' che Apple chiede nel feed nuovo di un trasloco: stesso valore del self-link.
+        out.append(f"    <itunes:new-feed-url>{escape(declared_feed)}</itunes:new-feed-url>\n")
+    out.append(f"    <podcast:guid>{escape(guid)}</podcast:guid>\n")
     if image:
         out.append(
             "    <image>\n"
@@ -261,8 +344,19 @@ def build_feed(
             out.append(f"    <itunes:category text={quoteattr(main)}/>\n")
     # Obbligatorio per Apple: senza content-warning (NIP-36) e' false, l'unica scelta onesta.
     out.append(f"    <itunes:explicit>{'true' if is_explicit(card) else 'false'}</itunes:explicit>\n")
+    show_type = (first_tag_value(card, "type") or "").strip().lower()
+    if show_type in _SHOW_TYPES:
+        # Con "serial" l'ordine del feed resta dal piu' recente: e' Apple a mostrarlo al contrario.
+        out.append(f"    <itunes:type>{show_type}</itunes:type>\n")
+    out.append(_persons(card, "    "))
+    out.append(_value_block(card, "    "))
+    for values in tag_values(card, "funding"):
+        url = absolute_url(values[0] if values else None)
+        if url:
+            text = (values[1] if len(values) > 1 else "") or ""
+            out.append(f"    <podcast:funding url={quoteattr(url)}>{escape(text.strip())}</podcast:funding>\n")
     if episodes:
-        out.append(_tag("lastBuildDate", rfc822(max(e["created_at"] for e in episodes))))
+        out.append(_tag("lastBuildDate", rfc822(max(pub_timestamp(e) for e in episodes))))
 
     for event in episodes:
         out.append(_item(event, pubkey_hex, enclosure_lengths, episode_relay_hints))
@@ -295,8 +389,11 @@ def _item(event: dict, pubkey_hex: str, lengths: Dict[str, Optional[int]],
     out.append(_tag("description", description, "      "))
     if html:
         out.append(f"      <content:encoded>{_cdata(html)}</content:encoded>\n")
-    out.append(f'      <guid isPermaLink="false">{escape(event["id"])}</guid>\n')
-    out.append(_tag("pubDate", rfc822(event["created_at"]), "      "))
+    # GUID dell'episodio: quello NIP-73 se dichiarato (un episodio migrato da un altro host deve
+    # restare lo STESSO episodio per le app), altrimenti l'id dell'evento. Escapato, non validato.
+    item_guid = nip73_value(event, "podcast:item:guid:") or event["id"]
+    out.append(f'      <guid isPermaLink="false">{escape(item_guid)}</guid>\n')
+    out.append(_tag("pubDate", rfc822(pub_timestamp(event)), "      "))
     out.append(_tag("link", f"{NJUMP}{nevent}", "      "))
     if image:
         out.append(f"      <itunes:image href={quoteattr(image)}/>\n")
@@ -317,5 +414,39 @@ def _item(event: dict, pubkey_hex: str, lengths: Dict[str, Optional[int]],
         out.append(f"      <podcast:alternateEnclosure type={quoteattr(alt_mime)}{length_attr}>\n"
                    f"        <podcast:source uri={quoteattr(alt_url)}/>\n"
                    "      </podcast:alternateEnclosure>\n")
+    out.append(_item_extras(event))
     out.append("    </item>\n")
+    return "".join(out)
+
+
+def _item_extras(event: dict) -> str:
+    """Tag Podcasting 2.0 dell'episodio. Tutti facoltativi: senza tag, stringa vuota."""
+    ind = "      "
+    out = []
+    season = (first_tag_value(event, "season") or "").strip()
+    if season.isdigit():
+        out.append(f"{ind}<itunes:season>{season}</itunes:season>\n"
+                   f"{ind}<podcast:season>{season}</podcast:season>\n")
+    episode = (first_tag_value(event, "episode") or "").strip()
+    if _DECIMAL_RE.match(episode):
+        if episode.isdigit():             # itunes:episode vuole un intero, podcast:episode no
+            out.append(f"{ind}<itunes:episode>{episode}</itunes:episode>\n")
+        out.append(f"{ind}<podcast:episode>{episode}</podcast:episode>\n")
+    ep_type = (first_tag_value(event, "episode-type") or "").strip().lower()
+    if ep_type in _EPISODE_TYPES:
+        out.append(f"{ind}<itunes:episodeType>{ep_type}</itunes:episodeType>\n")
+    for values in tag_values(event, "transcript"):
+        url = absolute_url(values[0] if values else None)
+        mime = (values[1] if len(values) > 1 else "") or ""
+        if url and mime.strip():
+            out.append(f"{ind}<podcast:transcript url={quoteattr(url)} type={quoteattr(mime.strip())}/>\n")
+    chapters = tag_values(event, "chapters")
+    if chapters:
+        url = absolute_url(chapters[0][0] if chapters[0] else None)
+        mime = ((chapters[0][1] if len(chapters[0]) > 1 else "") or "").strip()
+        if url:
+            out.append(f"{ind}<podcast:chapters url={quoteattr(url)} "
+                       f"type={quoteattr(mime or 'application/json+chapters')}/>\n")
+    out.append(_persons(event, ind))
+    out.append(_value_block(event, ind))
     return "".join(out)

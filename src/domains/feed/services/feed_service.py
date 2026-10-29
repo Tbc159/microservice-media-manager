@@ -156,10 +156,12 @@ class FeedService:
             raise NoPodcastCard(found.relays, unreached=list(fetched.unreached))
         profile = _newest(valid, KIND_PROFILE)
 
-        # created_at decrescente; a parita' di secondo l'id decide, per un ordine stabile.
+        # Data di pubblicazione decrescente (published_at se dichiarato, altrimenti created_at:
+        # la stessa che finisce in pubDate); a parita' di secondo l'id decide, per un ordine
+        # stabile.
         episodes = sorted(
             (e for e in valid if e["kind"] == KIND_EPISODE),
-            key=lambda e: (e["created_at"], e["id"]),
+            key=lambda e: (rss_builder.pub_timestamp(e), e["id"]),
             reverse=True,
         )[: max_episodes()]
         playable = [e for e in episodes if rss_builder.audio_tags(e)]

@@ -488,6 +488,20 @@ il feed costruito con quello che era arrivato e' rimasto in cache per il TTL pie
 - **Retry sui timeout**: un relay in timeout viene ritentato con timeout doppio; un rifiuto di
   connessione o un 503 no. Su relay veri con timeout stretto: 3/5 senza retry, 4/5 con.
 
+## 30. Feed: tag Podcasting 2.0 e NIP-73 (2026-10-29)
+
+Delta su F/H/J; ogni tag è facoltativo e, assente, lascia il feed **identico byte per byte**
+(stesso ETag — il golden precedente combacia ancora esattamente).
+
+- **Identità NIP-73**: `podcast:guid` del 10154 e `podcast:item:guid` del 54. GUID escapati, non
+  validati. Senza `i` il guid di show resta calcolato sull'URL della richiesta, **mai** dal tag
+  `feed`.
+- **`feed`** → `atom:link rel=self` **e** `itunes:new-feed-url`, qualunque sia l'`Host`.
+- **`published_at`** → `pubDate` e ordine degli item (prima: `created_at`).
+- `author`, `type`, `season`, `episode`, `episode-type`, `transcript`, `chapters`, `person`,
+  `value`/`value-recipient`, `funding`.
+- CORS `*` ed ETag invariati. Fixture completa: W3C `validity=true`, 0 errori.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

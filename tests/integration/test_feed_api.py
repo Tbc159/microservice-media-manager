@@ -385,3 +385,44 @@ def test_unreachable_indexers_make_the_feed_partial(monkeypatch):
     r = client.get(f"/v0/feed/{_npub()}.xml")
     assert r.status_code == 200 and r.headers["cache-control"] == "public, max-age=30"
     assert "indicizzatori NIP-65 (nessuna risposta)" in r.text.split("\n")[1]
+
+
+# ── Podcasting 2.0 / NIP-73 via API ────────────────────────────────────────────
+
+P20 = json.load(open("tests/fixtures/feed_p20_events.json"))
+P20_EVENTS = [P20["card"], P20["ep_a"], P20["ep_b"]]
+
+
+def _p20_npub():
+    from src.domains.feed.nostr import nip19
+    return nip19.hex_to_npub(P20["pubkey"])
+
+
+def test_order_follows_published_at_not_created_at():
+    """ep_a e' stato creato DOPO ep_b ma pubblicato PRIMA: il feed segue published_at."""
+    assert P20["ep_a"]["created_at"] > P20["ep_b"]["created_at"]
+    body = _client(P20_EVENTS, lengths={}).get(f"/v0/feed/{_p20_npub()}.xml").text
+    assert body.index("Ep. 2 — Trailer") < body.index("Ep. 1 — Migrato")
+
+
+@pytest.mark.parametrize("headers", [
+    {},
+    {"Host": "interno:8080"},
+    {"Host": "mediamanager-dev.duckdns.org", "X-Forwarded-Proto": "https"},
+    {"X-Forwarded-Host": "altro.example", "X-Forwarded-Proto": "http"},
+])
+def test_feed_tag_wins_whatever_the_host_header(headers):
+    """Dietro al reverse proxy del creatore il servizio vede il proprio host: il vero indirizzo
+    viene solo dalla scheda, e non deve dipendere da come e' arrivata la richiesta."""
+    body = _client(P20_EVENTS, lengths={}).get(f"/v0/feed/{_p20_npub()}.xml", headers=headers).text
+    tag = "https://feed.radiosatoshi.example.org/rss.xml"
+    assert re.search(r'<atom:link href="([^"]+)"', body).group(1) == tag
+    assert re.search(r"<itunes:new-feed-url>([^<]+)<", body).group(1) == tag
+
+
+def test_cors_and_etag_unchanged_with_the_new_tags():
+    client = _client(P20_EVENTS, lengths={})
+    r = client.get(f"/v0/feed/{_p20_npub()}.xml", headers={"Origin": "https://nmc.example"})
+    assert r.headers["access-control-allow-origin"] == "*"
+    assert client.get(f"/v0/feed/{_p20_npub()}.xml",
+                      headers={"If-None-Match": r.headers["etag"]}).status_code == 304

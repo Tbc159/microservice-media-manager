@@ -93,6 +93,22 @@ paths:
         | 54 | `["duration", "3600"]` (secondi interi) | `<itunes:duration>` |
         | 54 | `["content-warning", "..."]` | `<itunes:explicit>true</itunes:explicit>` nell'item |
 
+        **Podcasting 2.0 / NIP-73** (tutti facoltativi; assenti -> stesso corpo e stesso ETag di
+        prima):
+
+        | evento | tag | diventa |
+        |---|---|---|
+        | 10154 | `["i", "podcast:guid:<uuid>"]` | `<podcast:guid>`; senza, il calcolo di sempre sull'URL della richiesta (mai dal tag `feed`) |
+        | 10154 | `["feed", "<https url>"]` | `<atom:link rel="self">` **e** `<itunes:new-feed-url>`: dietro al proxy del creatore il servizio vede il proprio host, l'indirizzo vero viene solo dalla scheda |
+        | 10154 | `["author", "..."]` | `<itunes:author>` e `<itunes:owner><itunes:name>` (l'owner resta solo con l'email) |
+        | 10154 | `["type", "episodic\|serial"]` | `<itunes:type>` (l'ordine del feed resta dal piu' recente anche per serial) |
+        | 10154, 54 | `value`, `value-recipient`, `person` | `<podcast:value>`/`<podcast:valueRecipient>`, `<podcast:person>` |
+        | 10154 | `["funding", url, testo]` | `<podcast:funding>` |
+        | 54 | `["i", "podcast:item:guid:<guid>"]` | `<guid isPermaLink="false">`; senza, l'id dell'evento. Escapato, **non validato** |
+        | 54 | `["published_at", "<unix>"]` | `<pubDate>` **e** ordine degli item; senza, `created_at` |
+        | 54 | `season`, `episode`, `episode-type` | `itunes:` e `podcast:` season/episode, `itunes:episodeType` |
+        | 54 | `transcript` (0..n), `chapters` (al massimo 1) | `<podcast:transcript>`, `<podcast:chapters>` |
+
         I nomi delle categorie sono quelli **esatti** di Apple, `&` compresa: la validazione
         contro l'elenco la fa il client prima di pubblicare, il servizio riporta cio' che trova.
         **Non si inventa**: senza tag `category` nessun `itunes:category`, senza `email` nessun
