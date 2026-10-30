@@ -267,6 +267,8 @@ def build_feed(
     skipped: int = 0,
     episode_relay_hints: Sequence[str] = (),
     unreached: Sequence[str] = (),
+    duplicates: int = 0,
+    truncated: int = 0,
 ) -> str:
     """Documento RSS completo. `enclosure_lengths`: url -> Content-Length (None se ignoto).
     `unreached`: relay interrogati che non hanno risposto — segnati nel commento in testa."""
@@ -365,6 +367,11 @@ def build_feed(
         # In coda ma DENTRO <channel>: dopo </rss> sarebbe nell'epilogo del documento —
         # tecnicamente valido, ma alcuni validatori di feed lo trattano male.
         out.append(f"    <!-- saltati: {skipped} senza audio -->\n")
+    # Entrambi dipendono solo dagli eventi, quindi l'ETag resta deterministico.
+    if duplicates:
+        out.append(f"    <!-- doppioni scartati: {duplicates} -->\n")
+    if truncated:
+        out.append(f"    <!-- troncati: {truncated} episodi più vecchi oltre FEED_MAX_EPISODES -->\n")
     out.append("  </channel>\n</rss>\n")
     return "".join(out)
 

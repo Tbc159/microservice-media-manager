@@ -3,7 +3,9 @@
 Variabili d'ambiente:
   FEED_DB_PATH             cache persistente delle dimensioni enclosure (default /data/feed.db)
   FEED_CACHE_TTL_S         durata della cache del feed generato (default 300, = max-age)
-  FEED_MAX_EPISODES        tetto agli episodi letti dai relay (default 200)
+  FEED_MAX_EPISODES        episodi nel feed, i piu' recenti per data di pubblicazione (default 1000)
+  FEED_MAX_EVENTS_SCAN     tetto agli eventi kind 54 letti col paging (default 5000)
+  FEED_PARTIAL_CACHE_TTL_S cache di un feed parziale (default 30; 0 = nessuna)
   FEED_RELAY_TIMEOUT_S     timeout per relay (default 6)
   FEED_HEAD_TIMEOUT_S      timeout della HEAD sugli enclosure (default 5)
   FEED_INDEXER_RELAYS      relay indicizzatori per la NIP-65 (default purplepag.es, user.kindpag.es)

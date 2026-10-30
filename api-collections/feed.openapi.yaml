@@ -57,10 +57,15 @@ paths:
         \ se non risponde comunque il feed esce **parziale** (vedi\n   `200`);\n2. **kind 10154** (scheda\
         \ del podcast, una sola versione, la piu' recente) — se manca,\n   `404`. Non viene inventato\
         \ un canale a partire dal kind `0`;\n3. **kind 0** — solo per `itunes:author` e `itunes:owner`,\
-        \ se presenti;\n4. **kind 54** (episodi), ordinati per `created_at` decrescente. Zero episodi\
-        \ -> `200`\n   con il canale e nessun `<item>`: un feed vuoto e' valido.\n\nGli eventi con `id`\
-        \ incoerente o **firma non valida** vengono scartati: il feed accetta\nrelay dal chiamante, quindi\
-        \ non puo' fidarsi di cio' che un relay restituisce.\n\n**Enclosure**: `url` e `type` vengono\
+        \ se presenti;\n4. **kind 54** (episodi): letti **tutti**, con paging all'indietro per relay (i\
+        \ relay\n   applicano `limit` per `created_at`, che in un catalogo importato e' il giorno\n  \
+        \ dell'import). Un episodio per GUID (`podcast:item:guid`): vince il `created_at` piu'\n   recente,\
+        \ intero. Poi ordine per `published_at` (o `created_at`), piu' recente\n   prima, e solo allora\
+        \ il taglio a `FEED_MAX_EPISODES` (default 1000): resta fuori\n   sempre il piu' vecchio, ed e'\
+        \ dichiarato (`<!-- troncati: N ... -->`), come i doppioni\n   (`<!-- doppioni scartati: N -->`).\
+        \ Zero episodi -> `200`\n   con il canale e nessun `<item>`: un feed vuoto e' valido.\n\nGli eventi\
+        \ con `id` incoerente o **firma non valida** vengono scartati: il feed accetta\nrelay dal chiamante,\
+        \ quindi non puo' fidarsi di cio' che un relay restituisce.\n\n**Enclosure**: `url` e `type` vengono\
         \ dal **primo** tag `audio` con MIME `audio/*`; gli\naltri diventano `podcast:alternateEnclosure`.\
         \ Un episodio senza alcun tag `audio` viene\nsaltato e contato in un commento in coda (`<!-- saltati:\
         \ N senza audio -->`). NIP-F4 non\nporta la dimensione del file: `length` si ottiene con una `HEAD`\

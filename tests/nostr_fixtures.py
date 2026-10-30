@@ -63,11 +63,39 @@ class FakeRelays:
     davvero la selezione per kind e l'ordinamento, non una lista gia' pronta.
     """
 
-    def __init__(self, events, *, reached=None, fail=()):
+    def __init__(self, events, *, reached=None, fail=(), cap=None):
         self.events = list(events)
         self._reached = reached
         self.fail = set(fail)
+        self.cap = cap              # tetto al `limit` applicato dal relay (come fanno i veri)
         self.calls = []
+
+    def _answer(self, filters):
+        """Come un relay: kinds/authors/until, ordine per created_at decrescente, `limit`
+        tagliato al tetto del relay. Il `limit` e' per created_at, NON per published_at."""
+        out = []
+        for f in filters:
+            kinds, authors, until = f.get("kinds"), f.get("authors"), f.get("until")
+            picked = [
+                e for e in self.events
+                if (kinds is None or e["kind"] in kinds)
+                and (authors is None or e["pubkey"] in authors)
+                and (until is None or e["created_at"] <= until)
+            ]
+            picked.sort(key=lambda e: (e["created_at"], e["id"]), reverse=True)
+            limit = f.get("limit", 500)
+            if self.cap is not None:
+                limit = min(limit, self.cap)
+            out.extend(picked[:limit])
+        return out
+
+    def query_each(self, requests, *, timeout=None):
+        self.calls.append(("each", {u: list(f) for u, f in requests.items()}))
+        return {
+            u: (TimeoutError("relay finto muto") if u in self.fail
+                or (self._reached is not None and u not in self._reached) else self._answer(f))
+            for u, f in requests.items()
+        }
 
     def query(self, relays, filters, *, timeout=None):
         from src.domains.feed.nostr.relay_client import RelayQueryResult
@@ -76,17 +104,7 @@ class FakeRelays:
         reached = [r for r in relays if r not in self.fail]
         if self._reached is not None:
             reached = [r for r in reached if r in self._reached]
-        out = []
-        if reached:
-            for f in filters:
-                kinds, authors = f.get("kinds"), f.get("authors")
-                picked = [
-                    e for e in self.events
-                    if (kinds is None or e["kind"] in kinds)
-                    and (authors is None or e["pubkey"] in authors)
-                ]
-                picked.sort(key=lambda e: e["created_at"], reverse=True)
-                out.extend(picked[: f.get("limit", 500)])
+        out = self._answer(filters) if reached else []
         return RelayQueryResult(events=out, queried=list(relays), reached=reached)
 
 

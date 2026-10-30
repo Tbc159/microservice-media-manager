@@ -135,3 +135,30 @@ def test_verify_signatures_can_be_disabled_by_env(monkeypatch):
     assert ev.verify_signatures_enabled() is False
     monkeypatch.setenv("FEED_VERIFY_SIGNATURES", "1")
     assert ev.verify_signatures_enabled() is True
+
+
+# ── prestazioni della verifica: la scansione completa del catalogo la rende critica ─
+
+def test_verification_is_fast_enough_for_a_whole_catalogue():
+    """In affine costava ~85 ms a firma: 1000 episodi = 85 s alla prima generazione. In
+    jacobiane + Shamir ~2 ms. Soglia larga per non dipendere dalla macchina di CI."""
+    import time
+
+    events = [make_event(SK, kind=54, created_at=i, content=str(i)) for i in range(20)]
+    ev._VERIFIED.clear()
+    t = time.perf_counter()
+    assert all(ev.is_valid(e) for e in events)
+    assert (time.perf_counter() - t) / 20 < 0.02
+
+
+def test_verified_signatures_are_cached_but_failures_are_not():
+    e = make_event(SK, kind=54, created_at=1, content="x")
+    ev._VERIFIED.clear()
+    assert ev.is_valid(e) and (e["id"], e["pubkey"], e["sig"]) in ev._VERIFIED
+    forged = dict(e, content="altro")
+    forged["id"] = ev.compute_id(forged)                 # id ricalcolato, firma no
+    assert not ev.is_valid(forged)
+    assert len(ev._VERIFIED) == 1                        # il fallimento non entra in cache
+    # la cache e' legata alla firma: stesso id con un'altra firma va riverificato e rifiutato
+    other = dict(e, sig="00" * 64)
+    assert not ev.is_valid(other)

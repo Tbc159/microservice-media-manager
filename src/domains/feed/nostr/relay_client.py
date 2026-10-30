@@ -79,34 +79,46 @@ async def _query_one(url: str, filters: Sequence[dict], timeout: float) -> List[
     return events
 
 
-async def _query_all(relays: Sequence[str], filters: Sequence[dict], timeout: float) -> dict:
-    """url -> lista eventi, oppure l'eccezione. Tutti in parallelo, nessuno blocca gli altri."""
+async def _query_map(requests: Dict[str, Sequence[dict]], timeout: float) -> dict:
+    """url -> lista eventi, oppure l'eccezione. Ogni relay con i propri filtri, tutti in
+    parallelo: nessuno blocca gli altri."""
+    urls = list(requests)
     outcomes = await asyncio.gather(
-        *(asyncio.wait_for(_query_one(url, filters, timeout), timeout + 2) for url in relays),
+        *(asyncio.wait_for(_query_one(u, requests[u], timeout), timeout + 2) for u in urls),
         return_exceptions=True,
     )
-    return dict(zip(relays, outcomes))
+    return dict(zip(urls, outcomes))
 
 
-async def _gather(relays: Sequence[str], filters: Sequence[dict], timeout: float,
-                  retry: bool = None) -> RelayQueryResult:
-    result = RelayQueryResult(queried=list(relays))
-    outcomes = await _query_all(relays, filters, timeout)
+async def _query_all(relays: Sequence[str], filters: Sequence[dict], timeout: float) -> dict:
+    return await _query_map({u: filters for u in relays}, timeout)
 
-    # Secondo tentativo, solo per chi e' andato in TIMEOUT: un rifiuto di connessione o un
-    # errore di protocollo non cambiano dandogli piu' tempo, un relay lento si'.
+
+async def _outcomes(requests: Dict[str, Sequence[dict]], timeout: float, retry: bool = None) -> dict:
+    """Come `_query_map`, piu' il secondo tentativo per chi e' andato in TIMEOUT: un rifiuto di
+    connessione o un errore di protocollo non cambiano dandogli piu' tempo, un relay lento si'."""
+    outcomes = await _query_map(requests, timeout)
     retry = retry_on_timeout() if retry is None else retry
     timed_out = [u for u, o in outcomes.items() if isinstance(o, TimeoutError)]
     if retry and timed_out:
         logger.info("relay in timeout, secondo tentativo con timeout x%s: %s",
                     _RETRY_TIMEOUT_FACTOR, timed_out)
-        outcomes.update(await _query_all(timed_out, filters, timeout * _RETRY_TIMEOUT_FACTOR))
+        outcomes.update(await _query_map({u: requests[u] for u in timed_out},
+                                         timeout * _RETRY_TIMEOUT_FACTOR))
+    for url, outcome in outcomes.items():
+        if isinstance(outcome, BaseException):
+            logger.warning("relay non raggiunto %s: %s", url, type(outcome).__name__)
+    return outcomes
 
+
+async def _gather(relays: Sequence[str], filters: Sequence[dict], timeout: float,
+                  retry: bool = None) -> RelayQueryResult:
+    result = RelayQueryResult(queried=list(relays))
+    outcomes = await _outcomes({u: filters for u in relays}, timeout, retry)
     seen: Dict[str, dict] = {}
     for url in relays:
         outcome = outcomes[url]
         if isinstance(outcome, BaseException):
-            logger.warning("relay non raggiunto %s: %s", url, type(outcome).__name__)
             continue
         result.reached.append(url)
         for event in outcome:
@@ -116,18 +128,34 @@ async def _gather(relays: Sequence[str], filters: Sequence[dict], timeout: float
     return result
 
 
+def _run(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    # Gia' dentro un event loop (caso raro): un loop dedicato in un thread separato.
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+def query_each(requests: Dict[str, Sequence[dict]], *, timeout: float = None) -> dict:
+    """Filtri DIVERSI per relay, in parallelo: url -> lista eventi grezzi, o l'eccezione.
+
+    Serve al paging: ogni relay ha il proprio tetto al `limit` e quindi il proprio `until`. Un
+    `until` unico (il piu' vecchio fra tutti) salterebbe gli eventi del relay col tetto piu'
+    basso compresi fra il suo piu' vecchio e quello degli altri.
+    """
+    if not requests or websockets is None:
+        return {u: ConnectionError("websockets non disponibile") for u in requests}
+    return _run(_outcomes(dict(requests), timeout_s() if timeout is None else timeout))
+
+
 def query(relays: Sequence[str], filters: Sequence[dict], *, timeout: float = None) -> RelayQueryResult:
     """Interroga i relay e restituisce gli eventi deduplicati. Sincrona: la usa il controller."""
     relays = list(dict.fromkeys(relays))          # dedup mantenendo l'ordine
     if not relays or websockets is None:
         return RelayQueryResult(queried=relays)
     timeout = timeout_s() if timeout is None else timeout
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(_gather(relays, filters, timeout))
-    # Gia' dentro un event loop (caso raro): un loop dedicato in un thread separato.
-    import concurrent.futures
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, _gather(relays, filters, timeout)).result()
+    return _run(_gather(relays, filters, timeout))

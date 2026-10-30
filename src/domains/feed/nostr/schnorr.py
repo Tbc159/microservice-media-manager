@@ -29,6 +29,7 @@ def _tagged_hash(tag: str, msg: bytes) -> bytes:
 
 
 def _add(p1: Point, p2: Point) -> Point:
+    """Somma in coordinate affini (riferimento leggibile; il percorso caldo e' jacobiano)."""
     if p1 is None:
         return p2
     if p2 is None:
@@ -43,13 +44,87 @@ def _add(p1: Point, p2: Point) -> Point:
     return (x, (lam * (p1[0] - x) - p1[1]) % _P)
 
 
+# ── Coordinate jacobiane: (X, Y, Z) rappresenta (X/Z^2, Y/Z^3) ──────────────────
+#
+# In affine ogni somma costa un'inversione modulare (un `pow` a 256 bit): ~85 ms a verifica.
+# In jacobiane le inversioni spariscono dal ciclo e ne resta una sola alla fine. Insieme al
+# trucco di Shamir (s*G + k*P in un'unica passata di raddoppi) la verifica diventa abbastanza
+# veloce da reggere la scansione dell'intero catalogo di un podcast.
+
+_J_INF = (1, 1, 0)
+
+
+def _j_double(pt):
+    x, y, z = pt
+    if z == 0 or y == 0:
+        return _J_INF
+    yy = y * y % _P
+    s = 4 * x * yy % _P
+    m = 3 * x * x % _P                       # a = 0 per secp256k1
+    x3 = (m * m - 2 * s) % _P
+    y3 = (m * (s - x3) - 8 * yy * yy) % _P
+    return (x3, y3, 2 * y * z % _P)
+
+
+def _j_add(p1, p2):
+    if p1[2] == 0:
+        return p2
+    if p2[2] == 0:
+        return p1
+    x1, y1, z1 = p1
+    x2, y2, z2 = p2
+    z1z1, z2z2 = z1 * z1 % _P, z2 * z2 % _P
+    u1, u2 = x1 * z2z2 % _P, x2 * z1z1 % _P
+    s1, s2 = y1 * z2 * z2z2 % _P, y2 * z1 * z1z1 % _P
+    if u1 == u2:
+        return _j_double(p1) if s1 == s2 else _J_INF
+    h, r = (u2 - u1) % _P, (s2 - s1) % _P
+    hh = h * h % _P
+    hhh = h * hh % _P
+    v = u1 * hh % _P
+    x3 = (r * r - hhh - 2 * v) % _P
+    y3 = (r * (v - x3) - s1 * hhh) % _P
+    return (x3, y3, h * z1 * z2 % _P)
+
+
+def _to_affine(pt) -> Point:
+    x, y, z = pt
+    if z == 0:
+        return None
+    zi = pow(z, -1, _P)
+    zi2 = zi * zi % _P
+    return (x * zi2 % _P, y * zi2 * zi % _P)
+
+
+def _jac(point: Point):
+    return _J_INF if point is None else (point[0], point[1], 1)
+
+
 def _mul(point: Point, scalar: int) -> Point:
-    result: Point = None
-    for i in range(256):
+    """scalar * point (affine in ingresso e in uscita)."""
+    result, addend = _J_INF, _jac(point)
+    for i in range(scalar.bit_length()):
         if (scalar >> i) & 1:
-            result = _add(result, point)
-        point = _add(point, point)
-    return result
+            result = _j_add(result, addend)
+        addend = _j_double(addend)
+    return _to_affine(result)
+
+
+def _mul_add(a: int, pa: Point, b: int, pb: Point) -> Point:
+    """a*PA + b*PB in un'unica passata (Shamir): un raddoppio per bit invece di due."""
+    ja, jb = _jac(pa), _jac(pb)
+    jab = _j_add(ja, jb)
+    result = _J_INF
+    for i in range(max(a.bit_length(), b.bit_length()) - 1, -1, -1):
+        result = _j_double(result)
+        bit_a, bit_b = (a >> i) & 1, (b >> i) & 1
+        if bit_a and bit_b:
+            result = _j_add(result, jab)
+        elif bit_a:
+            result = _j_add(result, ja)
+        elif bit_b:
+            result = _j_add(result, jb)
+    return _to_affine(result)
 
 
 def _lift_x(x: int) -> Point:
@@ -75,7 +150,7 @@ def verify(msg32: bytes, pubkey32: bytes, sig64: bytes) -> bool:
     if r >= _P or s >= _N:
         return False
     e = int.from_bytes(_tagged_hash("BIP0340/challenge", sig64[:32] + pubkey32 + msg32), "big") % _N
-    candidate = _add(_mul(_G, s), _mul(point, _N - e))
+    candidate = _mul_add(s, _G, _N - e, point)
     if candidate is None or candidate[1] % 2 != 0 or candidate[0] != r:
         return False
     return True

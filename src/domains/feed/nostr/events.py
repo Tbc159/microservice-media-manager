@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import os
+from collections import OrderedDict
 from typing import Optional
 
 from src.domains.feed.nostr import schnorr
@@ -22,6 +23,14 @@ from src.domains.feed.nostr import schnorr
 logger = logging.getLogger("feed")
 
 _REQUIRED = ("id", "pubkey", "created_at", "kind", "tags", "content", "sig")
+
+# Firme gia' verificate con successo: un evento Nostr e' immutabile (l'id e' l'hash del
+# contenuto, la firma e' su quell'id), quindi `(id, pubkey, sig)` valido una volta lo resta.
+# Con la scansione dell'intero catalogo, ogni rigenerazione del feed (ogni 5 minuti) altrimenti
+# riverificherebbe migliaia di firme. Solo i SUCCESSI: un fallimento non deve occupare spazio
+# a scelta di chi li produce. Limitata, in ordine di inserimento.
+_VERIFIED: "OrderedDict[tuple, None]" = OrderedDict()
+_VERIFIED_MAX = 50_000
 
 
 def compute_id(event: dict) -> str:
@@ -54,11 +63,16 @@ def is_valid(event, *, pubkey: Optional[str] = None, verify_signature: Optional[
             return False
         if verify_signature is None:
             verify_signature = verify_signatures_enabled()
-        if verify_signature and not schnorr.verify(
-            bytes.fromhex(event["id"]), bytes.fromhex(event["pubkey"]), bytes.fromhex(event["sig"])
-        ):
-            logger.warning("evento con firma non valida scartato: %s", event["id"][:12])
-            return False
+        if verify_signature:
+            key = (event["id"], event["pubkey"], event["sig"])
+            if key not in _VERIFIED:
+                if not schnorr.verify(bytes.fromhex(event["id"]), bytes.fromhex(event["pubkey"]),
+                                      bytes.fromhex(event["sig"])):
+                    logger.warning("evento con firma non valida scartato: %s", event["id"][:12])
+                    return False
+                _VERIFIED[key] = None
+                if len(_VERIFIED) > _VERIFIED_MAX:
+                    _VERIFIED.popitem(last=False)
     except (ValueError, TypeError, KeyError):
         return False
     return True
