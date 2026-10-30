@@ -886,6 +886,36 @@ reale** (`validator.w3.org/feed`): `validity=true`, zero errori. La CI ne verifi
 riproducibili offline (owner con email o assente, `category` solo come attributo, `explicit`
 `true`/`false`, `language` a due lettere).
 
+### Podcasting 2.0 e NIP-73: identità, indirizzo, dati dell'episodio
+
+Delta su F/H/J. Tutti i tag sono facoltativi e **assenti danno esattamente il feed di prima**:
+stesso corpo, stesso ETag — lo prova il golden di H/J, generato prima di questo delta e ancora
+identico byte per byte.
+
+**Identità (NIP-73).** `["i", "podcast:guid:<uuid>"]` nel 10154 diventa `<podcast:guid>`;
+`["i", "podcast:item:guid:<guid>"]` nel 54 diventa il `<guid>` dell'item. Servono per i
+traslochi: un episodio migrato da un altro host deve restare *lo stesso* episodio per le app.
+I GUID **non si validano** — un vecchio host può aver usato URL o stringhe qualsiasi — si
+escapano e basta. Senza tag `i`, il `podcast:guid` resta il calcolo di sempre sull'URL della
+richiesta: **mai** dal tag `feed`, perché un'identità non deve cambiare perché si è aggiunto un
+indirizzo.
+
+**Indirizzo (`feed`).** Dietro al reverse proxy del creatore il servizio vede il proprio host,
+non quello pubblico: l'indirizzo vero può venire solo dalla scheda. Se c'è, vale sia per
+`<atom:link rel="self">` sia per `<itunes:new-feed-url>` (che Apple chiede nel feed nuovo di un
+trasloco), qualunque sia l'header `Host` della richiesta.
+
+**Date e ordine.** `published_at` del 54 dà il `pubDate` **e** l'ordine degli item; senza, vale
+`created_at`. Un episodio ripubblicato ha un `created_at` nuovo ma non è un episodio nuovo. Con
+`type=serial` l'ordine del feed resta dal più recente: è Apple a mostrarlo al contrario.
+
+**Il resto**: `author` (vince sul kind 0, e dà anche `itunes:owner/itunes:name`; la regola
+dell'email di H resta), `season`/`episode` (in `itunes:` e `podcast:`; un episodio decimale come
+`2.5` solo in `podcast:episode`, perché `itunes:episode` vuole un intero), `episode-type`,
+`transcript` (0..n), `chapters` (al massimo 1), `person` (vuoti in coda omessi), `value` +
+`value-recipient` (`fee="true"` solo se dichiarato), `funding`. Valori fuori dominio — un `type`
+che non è `episodic|serial`, una `season` non intera, un URL non web — vengono omessi.
+
 ### Enclosure: `length` e il perché di una HEAD
 
 NIP-F4 non porta la dimensione del file, ma RSS vuole `length`. Si ottiene con una **HEAD**

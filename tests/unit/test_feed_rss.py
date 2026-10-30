@@ -1,5 +1,6 @@
 """Generatore RSS, scoperta dei relay, cache e rate limit: la logica pura del dominio feed."""
 import json
+import re
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -527,3 +528,125 @@ def test_gather_without_retry_marks_timeouts_unreached(monkeypatch):
     monkeypatch.setattr(rc, "_query_one", fake_query_one)
     result = asyncio.run(rc._gather(["wss://a"], [{}], 1.0, retry=False))
     assert result.unreached == ["wss://a"] and result.partial
+
+
+# ── Podcasting 2.0 / NIP-73 (delta su F, H, J) ─────────────────────────────────
+
+P20 = json.load(open("tests/fixtures/feed_p20_events.json"))
+P20_LENGTHS = {"https://blossom.example.org/a.mp3": 1000, "https://blossom.example.org/b.mp3": 2000}
+
+
+def _build_p20(card=None, episodes=None, feed_url=None):
+    from src.domains.feed.nostr import nip19
+
+    pk = P20["pubkey"]
+    return rss_builder.build_feed(
+        card=card or P20["card"], profile=None,
+        episodes=episodes if episodes is not None else [P20["ep_b"], P20["ep_a"]],
+        pubkey_hex=pk,
+        feed_url=feed_url or f"http://interno:8080/v0/feed/{nip19.hex_to_npub(pk)}.xml",
+        lang="it", relays=["wss://nos.example"], episode_relay_hints=["wss://nos.example"],
+        enclosure_lengths=P20_LENGTHS)
+
+
+def _without(event, *names):
+    """Copia dell'evento senza i tag indicati (il builder non riverifica la firma)."""
+    return {**event, "tags": [t for t in event["tags"] if t[0] not in names]}
+
+
+_P20_TAGS = ("i", "k", "feed", "author", "type", "value", "value-recipient", "person", "funding",
+             "published_at", "season", "episode", "episode-type", "transcript", "chapters")
+
+
+def test_p20_full_fixture_matches_the_expected_feed_ignoring_whitespace():
+    squash = lambda s: re.sub(r"\s+", " ", s).strip()        # noqa: E731
+    assert squash(_build_p20()) == squash(open("tests/fixtures/feed_p20_expected.xml").read())
+
+
+def test_without_the_new_tags_the_feed_is_todays_byte_for_byte():
+    """Il golden di H/J e' stato generato PRIMA di questo delta: se combacia byte per byte, i tag
+    nuovi assenti non cambiano nulla — ne' corpo ne' ETag."""
+    from src.domains.feed.nostr import nip19
+    from src.domains.feed.services.feed_service import _etag
+
+    relays = ["wss://damus.example", "wss://nos.example"]
+    body = rss_builder.build_feed(
+        card=CARD, profile=PROFILE, episodes=[EP1, EP2], pubkey_hex=PK,
+        feed_url=f"https://media.example.org/v0/feed/{nip19.hex_to_npub(PK)}.xml",
+        lang="it", relays=relays, enclosure_lengths=LENGTHS, skipped=1, episode_relay_hints=relays)
+    expected = open("tests/fixtures/feed_expected.xml").read()
+    assert body == expected
+    assert _etag(body) == _etag(expected)
+
+
+def test_stripping_the_new_tags_from_the_p20_fixture_removes_every_new_element():
+    card = _without(P20["card"], *_P20_TAGS)
+    eps = [_without(e, *_P20_TAGS) for e in (P20["ep_b"], P20["ep_a"])]
+    body = _build_p20(card=card, episodes=eps)
+    for marker in ("new-feed-url", "itunes:type", "podcast:person", "podcast:value", "funding",
+                   "season", "episode", "transcript", "chapters"):
+        assert marker not in body, marker
+    # e le identita' tornano quelle di sempre: guid calcolato, guid item = id evento
+    url = re.search(r'<atom:link href="([^"]+)"', body).group(1)
+    assert f"<podcast:guid>{rss_builder.podcast_guid(url)}</podcast:guid>" in body
+    assert f'<guid isPermaLink="false">{P20["ep_a"]["id"]}</guid>' in body
+
+
+def test_published_at_decides_pubdate():
+    body = _build_p20()
+    assert rss_builder.rfc822(1700000000) in body                 # ep_a: published_at
+    assert rss_builder.rfc822(P20["ep_a"]["created_at"]) not in body
+
+
+def test_non_uuid_item_guid_is_escaped_not_rejected():
+    body = _build_p20()
+    assert '<guid isPermaLink="false">https://oldhost.example.com/ep?id=1&amp;show=rs</guid>' in body
+    ET.fromstring(body)
+
+
+def test_show_guid_from_i_tag_otherwise_todays_computation_never_from_feed_tag():
+    url = "http://interno:8080/v0/feed/x.xml"
+    assert "<podcast:guid>917393e3-1b1e-5cef-ace4-edaa54e1f810</podcast:guid>" in _build_p20()
+    # senza tag i ma CON tag feed: il guid resta quello calcolato sull'URL della richiesta.
+    # Un'identita' non cambia perche' si e' aggiunto un indirizzo.
+    body = _build_p20(card=_without(P20["card"], "i", "k"), feed_url=url)
+    assert f"<podcast:guid>{rss_builder.podcast_guid(url)}</podcast:guid>" in body
+    assert rss_builder.podcast_guid("https://feed.radiosatoshi.example.org/rss.xml") not in body
+
+
+def test_feed_tag_sets_both_self_link_and_new_feed_url():
+    body = _build_p20()
+    tag = "https://feed.radiosatoshi.example.org/rss.xml"
+    assert f'<atom:link href="{tag}" rel="self"' in body
+    assert f"<itunes:new-feed-url>{tag}</itunes:new-feed-url>" in body
+    without = _build_p20(card=_without(P20["card"], "feed"))
+    assert "new-feed-url" not in without
+    assert '<atom:link href="http://interno:8080/' in without
+
+
+def test_author_tag_wins_over_profile_and_owner_follows_it():
+    body = _build_p20()
+    assert "<itunes:author>Redazione Radio Satoshi</itunes:author>" in body
+    assert "<itunes:name>Redazione Radio Satoshi</itunes:name>" in body
+    # la regola dell'email (Prompt H) resta: senza email, nessun owner
+    assert "itunes:owner" not in _build_p20(card=_without(P20["card"], "email"))
+
+
+def test_serial_type_does_not_reverse_the_feed_order():
+    """E' Apple a mostrare un serial dal piu' vecchio: il feed resta dal piu' recente."""
+    body = _build_p20()
+    assert "<itunes:type>serial</itunes:type>" in body
+    assert body.index("Ep. 2 — Trailer") < body.index("Ep. 1 — Migrato")
+
+
+def test_person_trailing_empties_and_value_fee():
+    body = _build_p20()
+    assert '<podcast:person role="guest">Bob Verdi</podcast:person>' in body
+    assert 'split="10" fee="true"/>' in body
+    assert body.count('fee="') == 1                               # fee vuoto -> attributo assente
+
+
+def test_decimal_episode_only_in_podcast_namespace():
+    body = _build_p20()
+    assert "<podcast:episode>2.5</podcast:episode>" in body
+    assert "<itunes:episode>2.5" not in body                      # itunes vuole un intero

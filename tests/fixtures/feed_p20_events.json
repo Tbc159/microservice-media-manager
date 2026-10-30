@@ -1,0 +1,213 @@
+{
+  "pubkey": "438a4f623099e7c238970a8481b03d449fd45cc2c2185e739b28f28ce5342bb3",
+  "card": {
+    "pubkey": "438a4f623099e7c238970a8481b03d449fd45cc2c2185e739b28f28ce5342bb3",
+    "created_at": 1760000000,
+    "kind": 10154,
+    "tags": [
+      [
+        "title",
+        "Radio Satoshi"
+      ],
+      [
+        "description",
+        "Conversazioni su Bitcoin."
+      ],
+      [
+        "image",
+        "https://cdn.example.org/cover.png"
+      ],
+      [
+        "i",
+        "podcast:guid:917393e3-1b1e-5cef-ace4-edaa54e1f810"
+      ],
+      [
+        "k",
+        "podcast:guid"
+      ],
+      [
+        "feed",
+        "https://feed.radiosatoshi.example.org/rss.xml"
+      ],
+      [
+        "author",
+        "Redazione Radio Satoshi"
+      ],
+      [
+        "email",
+        "owner@radiosatoshi.example.org"
+      ],
+      [
+        "type",
+        "serial"
+      ],
+      [
+        "value",
+        "lightning",
+        "keysend",
+        "0.00000005000"
+      ],
+      [
+        "value-recipient",
+        "Alice",
+        "node",
+        "02d5c1bf8b940dc9cadca86d1b0a3c37fbe39cee4c7e839e33bef9174531d27f52",
+        "90",
+        "",
+        "",
+        ""
+      ],
+      [
+        "value-recipient",
+        "Host",
+        "node",
+        "03ae9f91a0cb8ff43840e3c322c4c61f019d8c1c3cea15a25cfc425ac605e61a4a",
+        "10",
+        "",
+        "",
+        "true"
+      ],
+      [
+        "person",
+        "Alice Rossi",
+        "host",
+        "cast",
+        "https://cdn.example.org/alice.png",
+        "https://alice.example.org"
+      ],
+      [
+        "funding",
+        "https://radiosatoshi.example.org/sostieni",
+        "Sostieni lo show"
+      ]
+    ],
+    "content": "",
+    "id": "bd931dc58e8d784efdaaf7274715ee06ae68ccbe7ec6f7023f232ffb525c8fb0",
+    "sig": "ef527bb899673d703d408016ec5d3fcb02afd971a3f4f620044aa91e3435898844c362f37d644be9f2ab963f74de06f2d6113c2d3784475577500cbc837c3e75"
+  },
+  "ep_a": {
+    "pubkey": "438a4f623099e7c238970a8481b03d449fd45cc2c2185e739b28f28ce5342bb3",
+    "created_at": 1760900000,
+    "kind": 54,
+    "tags": [
+      [
+        "title",
+        "Ep. 1 — Migrato"
+      ],
+      [
+        "description",
+        "Episodio importato da un vecchio host."
+      ],
+      [
+        "audio",
+        "https://blossom.example.org/a.mp3",
+        "audio/mpeg"
+      ],
+      [
+        "i",
+        "podcast:item:guid:https://oldhost.example.com/ep?id=1&show=rs"
+      ],
+      [
+        "k",
+        "podcast:item:guid"
+      ],
+      [
+        "published_at",
+        "1700000000"
+      ],
+      [
+        "season",
+        "1"
+      ],
+      [
+        "episode",
+        "1"
+      ],
+      [
+        "episode-type",
+        "full"
+      ],
+      [
+        "transcript",
+        "https://cdn.example.org/ep1.vtt",
+        "text/vtt"
+      ],
+      [
+        "transcript",
+        "https://cdn.example.org/ep1.srt",
+        "application/srt"
+      ],
+      [
+        "chapters",
+        "https://cdn.example.org/ep1.json",
+        "application/json+chapters"
+      ],
+      [
+        "person",
+        "Bob Verdi",
+        "guest",
+        "",
+        "",
+        ""
+      ],
+      [
+        "value",
+        "lightning",
+        "keysend",
+        "0.00000005000"
+      ],
+      [
+        "value-recipient",
+        "Alice",
+        "node",
+        "02d5c1bf8b940dc9cadca86d1b0a3c37fbe39cee4c7e839e33bef9174531d27f52",
+        "90",
+        "",
+        "",
+        ""
+      ]
+    ],
+    "content": "",
+    "id": "20f8ff23c546471d680ebdc78ade93e3ca4b934aaae896484160961fd9e6679c",
+    "sig": "4884ae052881cbae4cb1a5a8053539c56b3dc24f2b9425f7890ef2ad49b6b1829c40c171adfb8a1a844901a9136565e86de58fd134cbd27515c9f10015e078eb"
+  },
+  "ep_b": {
+    "pubkey": "438a4f623099e7c238970a8481b03d449fd45cc2c2185e739b28f28ce5342bb3",
+    "created_at": 1760800000,
+    "kind": 54,
+    "tags": [
+      [
+        "title",
+        "Ep. 2 — Trailer"
+      ],
+      [
+        "description",
+        "Il trailer della stagione 2."
+      ],
+      [
+        "audio",
+        "https://blossom.example.org/b.mp3",
+        "audio/mpeg"
+      ],
+      [
+        "published_at",
+        "1760500000"
+      ],
+      [
+        "season",
+        "2"
+      ],
+      [
+        "episode",
+        "2.5"
+      ],
+      [
+        "episode-type",
+        "trailer"
+      ]
+    ],
+    "content": "",
+    "id": "f1a5b1f6a1c86dd9cf4fdce675592df6a8424a868ba6cd94e0e491ec8352beba",
+    "sig": "1a39181aacdb5ffdc835efe2939d1db4f1b72bd4ac5c82d96189a24645c982222bc550d9fa0d3a217b5d07c0d5110aa8252456770da0c499a5d3b392fadafd1f"
+  }
+}
