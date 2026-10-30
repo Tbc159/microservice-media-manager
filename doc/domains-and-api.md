@@ -801,8 +801,8 @@ li elenca nel corpo. Senza, un podcast inesistente è indistinguibile da uno cer
 sbagliato.
 
 Poi: kind `10154` (una versione, la più recente; **se manca è `404`**, non si inventa un canale
-dal kind `0`), kind `0` solo per `itunes:author`/`itunes:owner`, kind `54` ordinati per
-`created_at` decrescente. **Zero episodi è un `200`** con il canale e nessun `<item>`: un feed
+dal kind `0`), kind `0` solo per `itunes:author`/`itunes:owner`, kind `54` **tutti**, con
+paging, ordinati per data di pubblicazione decrescente (vedi sotto). **Zero episodi è un `200`** con il canale e nessun `<item>`: un feed
 vuoto è valido.
 
 ### Gli eventi vengono verificati, non creduti
@@ -915,6 +915,45 @@ dell'email di H resta), `season`/`episode` (in `itunes:` e `podcast:`; un episod
 `transcript` (0..n), `chapters` (al massimo 1), `person` (vuoti in coda omessi), `value` +
 `value-recipient` (`fee="true"` solo se dichiarato), `funding`. Valori fuori dominio — un `type`
 che non è `episodic|serial`, una `season` non intera, un URL non web — vengono omessi.
+
+### Tutto il catalogo, poi il taglio: paging, doppioni, prestazioni
+
+**Il problema.** I relay applicano `limit` per `created_at`, non per `published_at`. In un
+catalogo importato i `created_at` sono i giorni dell'import, nell'ordine in cui il creatore ha
+importato (il client accetta lotti in qualunque ordine, proprio perché ora data e ordine li dà
+`published_at`). Chiedere 200 episodi e ordinarli dopo dava 200 episodi *qualsiasi*, scelti
+dall'ordine dell'import; e un relay che taglia il `limit` più in basso dava lo stesso effetto su
+meno episodi.
+
+**Cosa si fa.**
+1. Si leggono **tutti** i kind 54 della chiave, pagina per pagina all'indietro con `until` =
+   il `created_at` più vecchio ricevuto (inclusivo: nello stesso secondo possono stare più
+   eventi; si deduplica per id), finché una pagina non porta niente di nuovo o si arriva a
+   `FEED_MAX_EVENTS_SCAN` eventi letti (default 5000).
+   - Il paging è **per relay**, ognuno col proprio `until`, tutti in parallelo: i relay hanno
+     tetti diversi, e un `until` unico salterebbe gli eventi di quello col tetto più basso.
+   - Se una pagina non porta niente di nuovo si riprova **una volta** con `until - 1` prima di
+     dichiarare il relay esaurito: una pagina tutta nello stesso secondo altrimenti fermerebbe
+     lo scorrimento.
+2. **Un item per GUID di episodio**: fra gli eventi con lo stesso `podcast:item:guid` vince il
+   `created_at` più recente — l'ultima versione — **per intero**, mai fuso campo per campo.
+   Senza tag `i` il GUID è l'id dell'evento, già unico.
+3. Ordine per `published_at` (o `created_at`), più recente prima, e **solo allora** il taglio a
+   `FEED_MAX_EPISODES` (default **1000**): resta fuori sempre il più vecchio. **Mai** un taglio
+   per `created_at`.
+
+Entrambi gli scarti sono dichiarati dentro `<channel>`, come i "saltati":
+`<!-- troncati: N episodi più vecchi oltre FEED_MAX_EPISODES -->` e
+`<!-- doppioni scartati: N -->`. Dipendono solo dagli eventi, quindi l'ETag resta
+deterministico. Un relay che cade a metà paging rende il feed **parziale** come nel Prompt J.
+
+**Prestazioni della verifica delle firme.** La scansione completa l'ha resa critica: in
+coordinate affini la verifica Schnorr costava ~85 ms per firma, quindi 1000 episodi ≈ 85 s alla
+prima generazione. Ora l'aritmetica è in **coordinate jacobiane** con il trucco di **Shamir**
+(`s·G + k·P` in un'unica passata): ~2 ms per firma, verificato su 144 firme reali della rete e
+contro manomissioni. In più c'è una **cache delle verifiche riuscite**: un evento Nostr è
+immutabile, quindi `(id, pubkey, sig)` valido una volta resta valido, e le rigenerazioni ogni
+5 minuti non riverificano nulla. I fallimenti non entrano in cache, e la cache è limitata.
 
 ### Enclosure: `length` e il perché di una HEAD
 

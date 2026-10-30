@@ -21,7 +21,9 @@ services:
       FEED_DB_PATH: /data/feed.db
       # Cache del feed generato: allineata al max-age dichiarato nella risposta.
       FEED_CACHE_TTL_S: ${FEED_CACHE_TTL_S:-300}
-      FEED_MAX_EPISODES: ${FEED_MAX_EPISODES:-200}
+      FEED_MAX_EPISODES: ${FEED_MAX_EPISODES:-1000}
+      FEED_MAX_EVENTS_SCAN: ${FEED_MAX_EVENTS_SCAN:-5000}
+      FEED_PARTIAL_CACHE_TTL_S: ${FEED_PARTIAL_CACHE_TTL_S:-30}
       FEED_RATE_LIMIT: ${FEED_RATE_LIMIT:-60}
       FEED_RATE_WINDOW_S: ${FEED_RATE_WINDOW_S:-60}
       FEED_RELAY_TIMEOUT_S: ${FEED_RELAY_TIMEOUT_S:-6}

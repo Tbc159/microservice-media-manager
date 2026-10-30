@@ -502,6 +502,23 @@ Delta su F/H/J; ogni tag è facoltativo e, assente, lascia il feed **identico by
   `value`/`value-recipient`, `funding`.
 - CORS `*` ed ETag invariati. Fixture completa: W3C `validity=true`, 0 errori.
 
+## 31. Feed: tutto il catalogo, poi il taglio (2026-10-30)
+
+I relay applicano `limit` per `created_at`, che in un catalogo importato è il giorno
+dell'import: con `limit=200` e ordinamento successivo un podcast con più di 200 episodi ne
+mostrava 200 scelti dall'ordine dell'import, non dalle date.
+
+- **Paging all'indietro per relay** (`until` inclusivo, dedup per id, un retry con `until-1`
+  contro le pagine tutte nello stesso secondo), fino a `FEED_MAX_EVENTS_SCAN` (5000).
+- **Un item per `podcast:item:guid`**: vince il `created_at` più recente, intero.
+- **Ordine per `published_at`, poi il taglio** a `FEED_MAX_EPISODES` (ora **1000**, anche nel
+  compose, che fissava ancora 200). Commenti `troncati` e `doppioni scartati`, deterministici.
+- Un relay che cade a metà paging lascia il feed **parziale** (regola del Prompt J invariata).
+- **Verifica Schnorr ~45 volte più veloce** (jacobiane + Shamir: da ~85 a ~2 ms per firma) e
+  **cache delle verifiche riuscite**: senza, la scansione completa avrebbe portato la prima
+  generazione di un catalogo da 1000 episodi a ~85 s.
+- Fixture del Prompt K attraverso il servizio vero: stesso corpo, stesso ETag.
+
 ## Prossimi passi suggeriti
 
 - Impostare i secret storage (`MINIO_*`, `STORAGE_*`) nell'Environment `collaudo`, poi promozione

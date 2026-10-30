@@ -42,7 +42,9 @@ KIND_CARD, KIND_PROFILE, KIND_EPISODE = 10154, 0, 54
 
 _DEFAULT_TTL_S = 300
 _DEFAULT_PARTIAL_TTL_S = 30
-_DEFAULT_MAX_EPISODES = 200
+_DEFAULT_MAX_EPISODES = 1000
+_DEFAULT_MAX_EVENTS_SCAN = 5000
+_PAGE_LIMIT = 500           # quanto si chiede per pagina; i relay possono tagliare di meno
 _RELAY_HINTS_IN_NEVENT = 2
 
 
@@ -59,6 +61,14 @@ def partial_cache_ttl_s() -> int:
         return max(0, int(os.environ.get("FEED_PARTIAL_CACHE_TTL_S", _DEFAULT_PARTIAL_TTL_S)))
     except ValueError:
         return _DEFAULT_PARTIAL_TTL_S
+
+
+def max_events_scan() -> int:
+    """Tetto agli eventi kind 54 letti in tutto (tutte le pagine, tutti i relay)."""
+    try:
+        return max(1, int(os.environ.get("FEED_MAX_EVENTS_SCAN", _DEFAULT_MAX_EVENTS_SCAN)))
+    except ValueError:
+        return _DEFAULT_MAX_EVENTS_SCAN
 
 
 def max_episodes() -> int:
@@ -140,39 +150,107 @@ class FeedService:
             self._cache[cache_key] = (now + ttl, result)
         return result
 
+    def _scan(self, relays: Sequence[str], pubkey: str):
+        """Tutti gli eventi utili della chiave: scheda, profilo e OGNI kind 54, con paging.
+
+        I relay applicano `limit` per created_at, non per published_at: chiedere 200 episodi e
+        ordinare poi per data di pubblicazione darebbe 200 episodi qualsiasi di un catalogo
+        importato (dove i created_at sono i giorni dell'import, nell'ordine dell'import). Quindi
+        si leggono tutti, pagina per pagina all'indietro, e il taglio si fa dopo.
+
+        Paging **per relay**: ognuno ha il proprio tetto al `limit` e quindi il proprio `until`
+        (inclusivo: nello stesso secondo possono stare piu' eventi; si deduplica per id). Un
+        relay e' esaurito quando una pagina non porta nulla di nuovo; prima di arrendersi si
+        riprova una volta con `until - 1`, perche' una pagina tutta nello stesso secondo — piu'
+        eventi di quanti il relay ne restituisce — altrimenti bloccherebbe lo scorrimento.
+        Si ferma comunque a FEED_MAX_EVENTS_SCAN eventi letti.
+
+        Restituisce `(eventi deduplicati per id, relay che non hanno risposto)`: un relay che
+        cade a meta' paging rende il risultato parziale come uno che non risponde affatto.
+        """
+        head = [{"kinds": [KIND_CARD, KIND_PROFILE], "authors": [pubkey], "limit": 10}]
+
+        def page(until=None):
+            f = {"kinds": [KIND_EPISODE], "authors": [pubkey], "limit": _PAGE_LIMIT}
+            if until is not None:
+                f["until"] = until
+            return f
+
+        seen: Dict[str, dict] = {}
+        per_relay: Dict[str, set] = {u: set() for u in relays}
+        unreached: List[str] = []
+        state: Dict[str, Tuple[Optional[int], bool]] = {}   # url -> (until, gia' provato -1)
+        requests = {u: head + [page()] for u in relays}
+        scanned = 0
+        while requests and scanned < max_events_scan():
+            outcomes = self._relays.query_each(requests)
+            next_requests = {}
+            for url in requests:
+                outcome = outcomes.get(url)
+                if isinstance(outcome, BaseException) or outcome is None:
+                    if url not in unreached:
+                        unreached.append(url)
+                    continue
+                new_ids = 0
+                oldest = None
+                for event in outcome:
+                    if not isinstance(event, dict) or not isinstance(event.get("id"), str):
+                        continue
+                    scanned += 1
+                    seen.setdefault(event["id"], event)
+                    if event.get("kind") != KIND_EPISODE:
+                        continue
+                    if event["id"] not in per_relay[url]:
+                        per_relay[url].add(event["id"])
+                        new_ids += 1
+                    ts = event.get("created_at")
+                    if isinstance(ts, int):
+                        oldest = ts if oldest is None else min(oldest, ts)
+                until, tried_minus_one = state.get(url, (None, False))
+                if new_ids and oldest is not None:
+                    state[url] = (oldest, False)
+                    next_requests[url] = [page(oldest)]
+                elif until is not None and not tried_minus_one and until > 0:
+                    state[url] = (until - 1, True)
+                    next_requests[url] = [page(until - 1)]
+            requests = next_requests
+        if scanned >= max_events_scan():
+            logger.warning("scansione interrotta a %s eventi per %s (FEED_MAX_EVENTS_SCAN)",
+                           scanned, pubkey[:12])
+        return list(seen.values()), [u for u in relays if u in unreached]
+
     def _generate(self, pubkey: str, found: discovery.Discovery, *, lang: str,
                   feed_url: str) -> FeedResult:
-        fetched = self._relays.query(found.relays, [
-            {"kinds": [KIND_CARD, KIND_PROFILE], "authors": [pubkey], "limit": 10},
-            {"kinds": [KIND_EPISODE], "authors": [pubkey], "limit": max_episodes()},
-        ])
-        valid = [e for e in fetched.events if ev.is_valid(e, pubkey=pubkey)]
-        discarded = len(fetched.events) - len(valid)
+        events, unreached_relays = self._scan(found.relays, pubkey)
+        valid = [e for e in events if ev.is_valid(e, pubkey=pubkey)]
+        discarded = len(events) - len(valid)
         if discarded:
             logger.warning("scartati %s eventi non validi per %s", discarded, pubkey[:12])
 
         card = _newest(valid, KIND_CARD)
         if card is None:
-            raise NoPodcastCard(found.relays, unreached=list(fetched.unreached))
+            raise NoPodcastCard(found.relays, unreached=list(unreached_relays))
         profile = _newest(valid, KIND_PROFILE)
 
-        # Data di pubblicazione decrescente (published_at se dichiarato, altrimenti created_at:
-        # la stessa che finisce in pubDate); a parita' di secondo l'id decide, per un ordine
-        # stabile.
-        episodes = sorted(
-            (e for e in valid if e["kind"] == KIND_EPISODE),
-            key=lambda e: (rss_builder.pub_timestamp(e), e["id"]),
-            reverse=True,
-        )[: max_episodes()]
+        # 1) Un episodio per GUID: fra gli eventi con lo stesso podcast:item:guid vince il
+        #    created_at piu' recente (l'ultima versione), INTERO — mai fusi campo per campo.
+        episodes, duplicates = _latest_per_guid(e for e in valid if e["kind"] == KIND_EPISODE)
         playable = [e for e in episodes if rss_builder.audio_tags(e)]
         skipped = len(episodes) - len(playable)
+        # 2) Ordine per data di pubblicazione (published_at, altrimenti created_at), piu' recente
+        #    prima; a parita' di secondo l'id decide, per un ordine stabile.
+        playable.sort(key=lambda e: (rss_builder.pub_timestamp(e), e["id"]), reverse=True)
+        # 3) SOLO ORA il taglio: resta fuori sempre il piu' vecchio per data di pubblicazione.
+        #    Mai per created_at: in un catalogo importato e' il giorno dell'import.
+        truncated = max(0, len(playable) - max_episodes())
+        playable = playable[: max_episodes()]
 
         # Tutti gli URL audio, non solo il primo: anche gli alternateEnclosure portano length.
         lengths = enclosure_probe.lengths_for(
             (url for e in playable for url, _ in rss_builder.audio_tags(e)),
             self._store, client=self._http,
         )
-        unreached = list(fetched.unreached)
+        unreached = list(unreached_relays)
         if found.indexers_queried and not found.indexers_reached:
             # Senza indicizzatori non sappiamo quali siano i relay dell'autore: abbiamo letto
             # solo i ripieghi, e i suoi episodi potrebbero stare altrove. E' parziale anche questo.
@@ -189,12 +267,32 @@ class FeedService:
             relays=found.relays,
             enclosure_lengths=lengths,
             skipped=skipped,
+            duplicates=duplicates,
+            truncated=truncated,
             # NON `fetched.reached`: gli hint entrano nel corpo e quindi nell'ETag, e devono
             # dipendere solo dagli eventi, non da quale relay ha risposto stavolta.
             episode_relay_hints=found.relays[:_RELAY_HINTS_IN_NEVENT],
             unreached=unreached,
         )
         return FeedResult(body=body, etag=_etag(body), relays=found.relays, unreached=unreached)
+
+
+def _latest_per_guid(episodes):
+    """`(episodi, doppioni scartati)`: un evento per GUID di episodio, il created_at piu' recente.
+
+    Due 54 con lo stesso `["i", "podcast:item:guid:<g>"]` sono lo stesso episodio (un import
+    ripreso dopo che un relay aveva perso la prima copia, o una correzione): il piu' recente
+    rimpiazza l'altro per intero. Senza tag `i` il GUID e' l'id dell'evento, gia' unico.
+    """
+    best: dict = {}
+    count = 0
+    for event in episodes:
+        count += 1
+        key = rss_builder.nip73_value(event, "podcast:item:guid:") or ("id", event["id"])
+        current = best.get(key)
+        if current is None or (event["created_at"], event["id"]) > (current["created_at"], current["id"]):
+            best[key] = event
+    return list(best.values()), count - len(best)
 
 
 def _newest(events: Sequence[dict], kind: int) -> Optional[dict]:
